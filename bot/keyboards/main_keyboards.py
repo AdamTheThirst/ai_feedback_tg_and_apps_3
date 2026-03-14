@@ -5,45 +5,43 @@
 
 Отвечает за:
 - сборку стартового меню;
-- сборку игровых меню.
+- сборку меню игры;
+- сборку кнопки завершения диалога.
 
 Как работает:
-- принимает тексты и записи кнопок из базы;
-- формирует inline-клавиатуры.
+- использует данные игр и UI-текстов;
+- возвращает готовые inline-клавиатуры.
 
 Что принимает:
-- игровые кнопки из БД;
-- тексты статичных кнопок.
+- список игр;
+- список игровых кнопок;
+- текст кнопки завершения.
 
 Что возвращает:
-- готовые inline-клавиатуры.
+- InlineKeyboardMarkup.
 """
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from database.models.game import Game
 from database.models.ui_text import UIText
 
 
 def build_start_menu_keyboard(
-    first_level_game_buttons: list[UIText],
+    games: list[Game],
     encyclopedia_text: str,
     profile_text: str,
 ) -> InlineKeyboardMarkup:
     """
-    Собирает клавиатуру стартового экрана.
-
-    Отвечает за:
-    - отображение кнопок верхнего уровня;
-    - добавление игровых кнопок, которые строятся динамически;
-    - добавление неактивных заглушек Энциклопедия и Личный кабинет.
+    Собирает клавиатуру стартового меню.
 
     Как работает:
-    - сначала добавляет игровые кнопки первого уровня;
-    - затем добавляет две кнопки-заглушки.
+    - верхний уровень игр строится по таблице games;
+    - затем добавляются две временные кнопки-заглушки.
 
     Что принимает:
-    - first_level_game_buttons: список игровых кнопок верхнего уровня;
+    - games: список игр;
     - encyclopedia_text: текст кнопки Энциклопедия;
     - profile_text: текст кнопки Личный кабинет.
 
@@ -53,10 +51,10 @@ def build_start_menu_keyboard(
 
     builder = InlineKeyboardBuilder()
 
-    for item in first_level_game_buttons:
+    for item in games:
         builder.button(
-            text=item.value,
-            callback_data=f"main:game_root:{item.game}",
+            text=item.name,
+            callback_data=f"main:game_root:{item.game_id}",
         )
 
     builder.button(text=encyclopedia_text, callback_data="main:stub:encyclopedia")
@@ -66,23 +64,23 @@ def build_start_menu_keyboard(
     return builder.as_markup()
 
 
-def build_game_menu_keyboard(second_level_buttons: list[UIText]) -> InlineKeyboardMarkup:
+def build_game_menu_keyboard(second_level_buttons: list[UIText]) -> InlineKeyboardMarkup | None:
     """
-    Собирает клавиатуру игрового меню второго уровня.
-
-    Отвечает за:
-    - отображение списка сценариев выбранной игры.
+    Собирает клавиатуру меню конкретной игры.
 
     Как работает:
-    - для каждой записи из БД создаёт отдельную inline-кнопку;
-    - в callback_data кладёт игру и alias выбранной кнопки.
+    - для каждой кнопки второго уровня создаёт inline-кнопку;
+    - в callback_data сохраняет game_id и alias UI-кнопки.
 
     Что принимает:
-    - second_level_buttons: список игровых кнопок второго уровня.
+    - second_level_buttons: список кнопок второго уровня.
 
     Что возвращает:
-    - объект InlineKeyboardMarkup.
+    - объект InlineKeyboardMarkup или None, если кнопок нет.
     """
+
+    if not second_level_buttons:
+        return None
 
     builder = InlineKeyboardBuilder()
 
@@ -92,5 +90,22 @@ def build_game_menu_keyboard(second_level_buttons: list[UIText]) -> InlineKeyboa
             callback_data=f"game:start:{item.game}:{item.alias}",
         )
 
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_finish_dialog_keyboard(button_text: str) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру с кнопкой завершения диалога.
+
+    Что принимает:
+    - button_text: текст кнопки.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text=button_text, callback_data="game:finish_feedback")
     builder.adjust(1)
     return builder.as_markup()

@@ -5,17 +5,18 @@
 
 Отвечает за:
 - создание таблиц;
-- лёгкую миграцию таблицы ui_texts;
-- заполнение таблицы ui_texts начальными значениями.
+- мягкую миграцию ui_texts;
+- заполнение таблиц начальными значениями.
 
 Как работает:
-- при старте приложения создаёт таблицы, если их нет;
-- затем проверяет наличие новых колонок в ui_texts;
-- при необходимости добавляет недостающие поля;
-- после этого добавляет обязательные UI-тексты.
+- создаёт таблицы, если их ещё нет;
+- добавляет недостающие колонки в ui_texts;
+- создаёт дефолтную игру game_0;
+- создаёт дефолтные промты;
+- создаёт UI-тексты по умолчанию.
 
 Что принимает:
-- ничего напрямую.
+- ничего.
 
 Что возвращает:
 - ничего.
@@ -24,7 +25,10 @@
 from sqlalchemy import text
 
 from database.base import Base
-from database.models import AdminLoginIncident, Password, UIText  # noqa: F401
+from database.models import AppLog, DialogMessage, Game, GamePrompt, Password, UIText  # noqa: F401
+from database.models import AdminLoginIncident  # noqa: F401
+from database.repositories.game_prompt_repository import GamePromptRepository
+from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
 from database.session import SessionFactory, engine
 
@@ -38,6 +42,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_greeting",
@@ -47,60 +52,127 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "game_0_greeting",
         "value": "Основное приветствие Я-высказывания",
         "text_type": "text",
-        "description": "Приветственное сообщение игрового меню Я-высказывание",
+        "description": "Приветствие меню игры Я-высказывание",
         "game": "game_0",
         "level": None,
         "order": None,
-    },
-    {
-        "alias": "btn_first_level_game_0",
-        "value": "Я-высказывание",
-        "text_type": "button",
-        "description": "Кнопка первого уровня для перехода в игру Я-высказывание",
-        "game": "game_0",
-        "level": 0,
-        "order": 0,
-    },
-    {
-        "alias": "btn_second_level_game_0_subordinate",
-        "value": "Подчинённый",
-        "text_type": "button",
-        "description": "Кнопка второго уровня для выбора сценария Подчинённый в игре Я-высказывание",
-        "game": "game_0",
-        "level": 1,
-        "order": 0,
-    },
-    {
-        "alias": "btn_second_level_game_0_colleague",
-        "value": "Коллега",
-        "text_type": "button",
-        "description": "Кнопка второго уровня для выбора сценария Коллега в игре Я-высказывание",
-        "game": "game_0",
-        "level": 1,
-        "order": 1,
+        "game_alias": None,
     },
     {
         "alias": "btn_encyclopedia",
         "value": "Энциклопедия",
         "text_type": "button",
-        "description": "Кнопка-заглушка перехода в раздел Энциклопедия",
+        "description": "Кнопка-заглушка раздела Энциклопедия",
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "btn_profile",
         "value": "Личный кабинет",
         "text_type": "button",
-        "description": "Кнопка-заглушка перехода в раздел Личный кабинет",
+        "description": "Кнопка-заглушка раздела Личный кабинет",
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "btn_second_level_game_0_subordinate",
+        "value": "Подчинённый",
+        "text_type": "button",
+        "description": "Кнопка второго уровня сценария Подчинённый",
+        "game": "game_0",
+        "level": 1,
+        "order": 0,
+        "game_alias": "game_alias_subordinate",
+    },
+    {
+        "alias": "btn_second_level_game_0_colleague",
+        "value": "Коллега",
+        "text_type": "button",
+        "description": "Кнопка второго уровня сценария Коллега",
+        "game": "game_0",
+        "level": 1,
+        "order": 1,
+        "game_alias": "game_alias_colleague",
+    },
+    {
+        "alias": "greeting_game_alias_subordinate",
+        "value": "Это приветствие Подчинённого",
+        "text_type": "text",
+        "description": "Приветствие игрового сценария Подчинённый",
+        "game": "game_0",
+        "level": None,
+        "order": None,
+        "game_alias": "game_alias_subordinate",
+    },
+    {
+        "alias": "greeting_game_alias_colleague",
+        "value": "Это приветствие Коллеги",
+        "text_type": "text",
+        "description": "Приветствие игрового сценария Коллега",
+        "game": "game_0",
+        "level": None,
+        "order": None,
+        "game_alias": "game_alias_colleague",
+    },
+    {
+        "alias": "thinking_message",
+        "value": "[Думаю...]",
+        "text_type": "text",
+        "description": "Сообщение во время ожидания ответа ИИ",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "finish_feedback_button",
+        "value": "Дай обратную связь",
+        "text_type": "button",
+        "description": "Кнопка завершения игрового диалога",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "game_inactive_message",
+        "value": "Игра пока не активна",
+        "text_type": "text",
+        "description": "Сообщение, если промт не активен",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "dialog_finished_message",
+        "value": "Диалог завершён. Возвращаю к выбору сценария.",
+        "text_type": "text",
+        "description": "Сообщение после ручного завершения диалога",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "dialog_timeout_message",
+        "value": "Время диалога истекло. Возвращаю к выбору сценария.",
+        "text_type": "text",
+        "description": "Сообщение после автоматического завершения диалога по таймеру",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_button_edit_start_greeting",
@@ -110,6 +182,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_button_edit_admin_greeting",
@@ -119,24 +192,97 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_button_edit_buttons",
         "value": "Изменить текст на кнопках",
         "text_type": "button",
-        "description": "Кнопка перехода к редактированию текстов кнопок",
+        "description": "Кнопка редактирования текстов кнопок",
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_button_change_password",
         "value": "Изменить пароль админки",
         "text_type": "button",
-        "description": "Кнопка запуска сценария смены пароля админки",
+        "description": "Кнопка смены пароля админки",
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_add_game",
+        "value": "Добавить игру",
+        "text_type": "button",
+        "description": "Кнопка добавления новой игры",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_prompt_work",
+        "value": "Работа с промтами",
+        "text_type": "button",
+        "description": "Кнопка перехода в раздел работы с промтами",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_prompt_add",
+        "value": "Добавить новый промт",
+        "text_type": "button",
+        "description": "Кнопка добавления нового промта",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_prompt_edit",
+        "value": "Изменить существующие промты",
+        "text_type": "button",
+        "description": "Кнопка редактирования существующих промтов",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_prompt_toggle",
+        "value": "Активировать/деактивировать промт",
+        "text_type": "button",
+        "description": "Кнопка переключения активности промта",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_prompt_delete",
+        "value": "Удалить промт",
+        "text_type": "button",
+        "description": "Кнопка удаления промта",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "admin_button_skip_image",
+        "value": "Пропустить изображение",
+        "text_type": "button",
+        "description": "Кнопка пропуска загрузки изображения для промта",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
     },
     {
         "alias": "admin_button_exit",
@@ -146,6 +292,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "common_edit_button",
@@ -155,29 +302,52 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
     },
     {
         "alias": "common_cancel_button",
         "value": "Отмена",
         "text_type": "button",
-        "description": "Универсальная кнопка отмены",
+        "description": "Универсальная кнопка отмены действия",
         "game": None,
         "level": None,
         "order": None,
+        "game_alias": None,
+    },
+]
+
+DEFAULT_GAMES: list[dict[str, str]] = [
+    {
+        "name": "Я-высказывание",
+        "game_id": "game_0",
+    },
+]
+
+DEFAULT_PROMPTS: list[dict[str, str | bool | None]] = [
+    {
+        "game_id": "game_0",
+        "alias": "game_alias_subordinate",
+        "conditions": "Это условия для Подчинённого",
+        "prompt_text": "Ты - ассистент. Ты умеешь только здороваться и говорить комплименты.",
+        "img_path": None,
+        "img_id": None,
+        "is_active": True,
+    },
+    {
+        "game_id": "game_0",
+        "alias": "game_alias_colleague",
+        "conditions": "Это условия для Коллеги",
+        "prompt_text": "Ты - ассистент. Ты умеешь только здороваться и говорить комплименты.",
+        "img_path": None,
+        "img_id": None,
+        "is_active": True,
     },
 ]
 
 
 async def init_database() -> None:
     """
-    Создаёт таблицы базы данных, если их ещё нет.
-
-    Отвечает за:
-    - создание структуры БД на старте приложения.
-
-    Как работает:
-    - открывает соединение с БД;
-    - вызывает metadata.create_all для всех зарегистрированных моделей.
+    Создаёт таблицы БД, если их ещё нет.
 
     Что принимает:
     - ничего.
@@ -192,14 +362,13 @@ async def init_database() -> None:
 
 async def migrate_ui_texts_table() -> None:
     """
-    Выполняет лёгкую миграцию таблицы ui_texts.
+    Мягко мигрирует таблицу ui_texts.
 
-    Отвечает за:
-    - добавление новых колонок game, level и order в уже существующую таблицу.
-
-    Как работает:
-    - читает список колонок через PRAGMA table_info;
-    - если нужной колонки нет, добавляет её через ALTER TABLE.
+    Добавляет недостающие колонки:
+    - game
+    - level
+    - order
+    - game_alias
 
     Что принимает:
     - ничего.
@@ -222,18 +391,60 @@ async def migrate_ui_texts_table() -> None:
         if "order" not in existing_columns:
             await connection.execute(text('ALTER TABLE ui_texts ADD COLUMN "order" INTEGER'))
 
+        if "game_alias" not in existing_columns:
+            await connection.execute(text("ALTER TABLE ui_texts ADD COLUMN game_alias VARCHAR(120)"))
+
+
+async def seed_games() -> None:
+    """
+    Заполняет таблицу games дефолтными значениями.
+
+    Что принимает:
+    - ничего.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    async with SessionFactory() as session:
+        repo = GameRepository(session)
+
+        for item in DEFAULT_GAMES:
+            await repo.create_if_missing(
+                name=item["name"],
+                game_id=item["game_id"],
+            )
+
+
+async def seed_prompts() -> None:
+    """
+    Заполняет таблицу game_prompts дефолтными значениями.
+
+    Что принимает:
+    - ничего.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    async with SessionFactory() as session:
+        repo = GamePromptRepository(session)
+
+        for item in DEFAULT_PROMPTS:
+            await repo.create_if_missing(
+                game_id=str(item["game_id"]),
+                alias=str(item["alias"]),
+                conditions=str(item["conditions"]),
+                prompt_text=str(item["prompt_text"]),
+                img_path=item["img_path"] if isinstance(item["img_path"], str) or item["img_path"] is None else None,
+                img_id=item["img_id"] if isinstance(item["img_id"], str) or item["img_id"] is None else None,
+                is_active=bool(item["is_active"]),
+            )
+
 
 async def seed_ui_texts() -> None:
     """
     Заполняет таблицу ui_texts начальными данными.
-
-    Отвечает за:
-    - добавление обязательных UI-текстов при первом запуске.
-
-    Как работает:
-    - открывает сессию;
-    - проходит по набору DEFAULT_UI_TEXTS;
-    - создаёт запись только если её ещё нет.
 
     Что принимает:
     - ничего.
@@ -254,20 +465,13 @@ async def seed_ui_texts() -> None:
                 game=item["game"] if isinstance(item["game"], str) or item["game"] is None else None,
                 level=item["level"] if isinstance(item["level"], int) or item["level"] is None else None,
                 order=item["order"] if isinstance(item["order"], int) or item["order"] is None else None,
+                game_alias=item["game_alias"] if isinstance(item["game_alias"], str) or item["game_alias"] is None else None,
             )
 
 
 async def prepare_database() -> None:
     """
     Полностью подготавливает базу данных к работе.
-
-    Отвечает за:
-    - создание таблиц;
-    - миграцию ui_texts;
-    - начальное заполнение справочников.
-
-    Как работает:
-    - последовательно вызывает init_database, migrate_ui_texts_table и seed_ui_texts.
 
     Что принимает:
     - ничего.
@@ -278,4 +482,6 @@ async def prepare_database() -> None:
 
     await init_database()
     await migrate_ui_texts_table()
+    await seed_games()
+    await seed_prompts()
     await seed_ui_texts()

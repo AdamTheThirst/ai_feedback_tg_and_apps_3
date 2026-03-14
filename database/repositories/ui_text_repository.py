@@ -5,24 +5,24 @@
 
 Отвечает за:
 - получение текстов по alias;
-- получение наборов текстов по alias;
-- получение всех кнопок;
-- получение игровых кнопок по уровню;
+- получение кнопок;
+- получение игровых кнопок;
 - создание записей по умолчанию;
-- обновление текста существующих записей.
+- мягкую дозапись новых служебных полей в старые записи;
+- обновление текста.
 
 Как работает:
 - скрывает SQLAlchemy-запросы от обработчиков;
-- предоставляет удобные методы для работы с UI-текстами.
+- предоставляет удобные методы работы с UI-текстами.
 
 Что принимает:
 - активную AsyncSession.
 
 Что возвращает:
-- объекты UIText или коллекции объектов UIText.
+- ORM-объекты UIText и коллекции объектов UIText.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models.ui_text import UIText
@@ -30,21 +30,21 @@ from database.models.ui_text import UIText
 
 class UITextRepository:
     """
-    Репозиторий для таблицы ui_texts.
+    Репозиторий таблицы ui_texts.
 
     Отвечает за:
     - чтение UI-текстов;
     - чтение игровых кнопок;
-    - обновление значений текстов;
-    - начальное создание записей.
+    - создание и дозаполнение дефолтных записей;
+    - изменение текстов.
 
     Как работает:
-    - получает в конструкторе активную SQLAlchemy-сессию;
+    - получает сессию в конструкторе;
     - выполняет ORM-запросы;
-    - при изменении данных делает commit.
+    - при изменениях делает commit.
 
     Что принимает:
-    - session: активная асинхронная сессия БД.
+    - session: активная SQLAlchemy-сессия.
 
     Что возвращает:
     - данные таблицы ui_texts в виде ORM-объектов.
@@ -55,7 +55,7 @@ class UITextRepository:
         Инициализирует репозиторий.
 
         Что принимает:
-        - session: активная асинхронная сессия БД.
+        - session: активная SQLAlchemy-сессия.
 
         Что возвращает:
         - ничего.
@@ -65,14 +65,7 @@ class UITextRepository:
 
     async def get_by_alias(self, alias: str) -> UIText | None:
         """
-        Получает запись по alias.
-
-        Отвечает за:
-        - поиск одного UI-текста по уникальному ключу.
-
-        Как работает:
-        - выполняет select-запрос по alias;
-        - возвращает найденный объект или None.
+        Получает одну запись по alias.
 
         Что принимает:
         - alias: уникальный ключ текста.
@@ -90,13 +83,6 @@ class UITextRepository:
         """
         Получает несколько записей по списку alias.
 
-        Отвечает за:
-        - пакетную выборку UI-текстов за один запрос.
-
-        Как работает:
-        - выполняет запрос с условием IN;
-        - собирает результат в словарь alias -> объект.
-
         Что принимает:
         - aliases: список alias.
 
@@ -113,13 +99,6 @@ class UITextRepository:
     async def get_all_buttons(self) -> list[UIText]:
         """
         Получает все активные кнопки системы.
-
-        Отвечает за:
-        - выборку всех записей типа button.
-
-        Как работает:
-        - фильтрует записи по type='button' и is_active=True;
-        - сортирует результат по id.
 
         Что принимает:
         - ничего.
@@ -139,21 +118,12 @@ class UITextRepository:
         """
         Получает игровые кнопки для указанного уровня меню.
 
-        Отвечает за:
-        - выборку кнопок, которые строят игровые меню динамически.
-
-        Как работает:
-        - выбирает только активные записи типа button;
-        - фильтрует по level;
-        - если передан game, дополнительно фильтрует по нему;
-        - если game не передан, возвращает кнопки верхнего игрового уровня.
-
         Что принимает:
         - level: уровень меню;
-        - game: alias игры или None.
+        - game: game_id игры или None.
 
         Что возвращает:
-        - список кнопок UIText, отсортированных по полю order.
+        - список кнопок UIText, отсортированных по order.
         """
 
         query = select(UIText).where(
@@ -162,15 +132,35 @@ class UITextRepository:
             UIText.level == level,
         )
 
-        if game is None:
-            query = query.where(UIText.game.is_not(None))
-        else:
+        if game is not None:
             query = query.where(UIText.game == game)
 
         query = query.order_by(UIText.order.asc(), UIText.id.asc())
-
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def get_next_order(self, game: str, level: int) -> int:
+        """
+        Возвращает следующий порядковый номер для игровой кнопки.
+
+        Что принимает:
+        - game: game_id игры;
+        - level: уровень меню.
+
+        Что возвращает:
+        - следующий order для новой кнопки.
+        """
+
+        result = await self.session.execute(
+            select(func.max(UIText.order)).where(
+                UIText.game == game,
+                UIText.level == level,
+            )
+        )
+        max_order = result.scalar_one_or_none()
+        if max_order is None:
+            return 0
+        return int(max_order) + 1
 
     async def create_if_missing(
         self,
@@ -181,26 +171,24 @@ class UITextRepository:
         game: str | None = None,
         level: int | None = None,
         order: int | None = None,
+        game_alias: str | None = None,
     ) -> UIText:
         """
-        Создаёт UI-текст, если его ещё нет в базе.
+        Создаёт запись, если её ещё нет.
 
-        Отвечает за:
-        - первичное заполнение таблицы ui_texts начальными значениями.
-
-        Как работает:
-        - сначала ищет запись по alias;
-        - если запись уже существует, возвращает её;
-        - если записи нет, создаёт новую и делает commit.
+        Важная особенность:
+        - если запись уже есть, метод мягко дозаполняет пустые новые поля,
+          например game, level, order, game_alias.
 
         Что принимает:
         - alias: уникальный ключ;
         - value: текст;
-        - text_type: тип записи, например button или text;
-        - description: описание назначения;
-        - game: alias игры или None;
+        - text_type: тип записи;
+        - description: описание;
+        - game: game_id или None;
         - level: уровень меню или None;
-        - order: порядок вывода или None.
+        - order: порядок вывода или None;
+        - game_alias: alias промта или None.
 
         Что возвращает:
         - существующий или созданный объект UIText.
@@ -208,6 +196,28 @@ class UITextRepository:
 
         existing = await self.get_by_alias(alias)
         if existing is not None:
+            is_changed = False
+
+            if existing.game is None and game is not None:
+                existing.game = game
+                is_changed = True
+
+            if existing.level is None and level is not None:
+                existing.level = level
+                is_changed = True
+
+            if existing.order is None and order is not None:
+                existing.order = order
+                is_changed = True
+
+            if existing.game_alias is None and game_alias is not None:
+                existing.game_alias = game_alias
+                is_changed = True
+
+            if is_changed:
+                await self.session.commit()
+                await self.session.refresh(existing)
+
             return existing
 
         item = UIText(
@@ -218,6 +228,7 @@ class UITextRepository:
             game=game,
             level=level,
             order=order,
+            game_alias=game_alias,
             is_active=True,
         )
         self.session.add(item)
@@ -227,19 +238,11 @@ class UITextRepository:
 
     async def update_value(self, alias: str, new_value: str) -> None:
         """
-        Обновляет значение текста по alias.
-
-        Отвечает за:
-        - изменение текста или надписи кнопки в базе.
-
-        Как работает:
-        - ищет запись по alias;
-        - если запись найдена, обновляет поле value;
-        - сохраняет изменения через commit.
+        Обновляет текст записи по alias.
 
         Что принимает:
         - alias: ключ записи;
-        - new_value: новое значение текста.
+        - new_value: новый текст.
 
         Что возвращает:
         - ничего.

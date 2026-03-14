@@ -8,16 +8,18 @@
 - создание диспетчера;
 - подключение роутеров;
 - инициализацию базы данных;
-- запуск polling.
+- настройку логирования;
+- запуск polling;
+- настройку сервиса игровых таймеров.
 
 Как работает:
-- загружает настройки;
 - подготавливает БД;
-- регистрирует middleware для прокидывания сессии БД;
-- запускает Telegram-бота.
+- настраивает middleware с сессией БД;
+- регистрирует роутеры;
+- запускает long polling.
 
 Что принимает:
-- ничего напрямую.
+- ничего.
 
 Что возвращает:
 - ничего.
@@ -36,6 +38,7 @@ from bot.handlers.start import router as start_router
 from config import settings
 from database.bootstrap import prepare_database
 from database.session import SessionFactory
+from services.game_timer import configure_game_timer_service
 
 
 class DatabaseSessionMiddleware(BaseMiddleware):
@@ -92,12 +95,14 @@ async def main() -> None:
     - подготовку базы данных;
     - создание бота и диспетчера;
     - подключение роутеров;
+    - настройку сервиса игровых таймеров;
     - запуск polling.
 
     Как работает:
     - вызывает prepare_database;
     - настраивает Bot и Dispatcher;
     - регистрирует middleware;
+    - подключает сервис игровых таймеров;
     - запускает long polling.
 
     Что принимает:
@@ -107,7 +112,10 @@ async def main() -> None:
     - ничего.
     """
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
     if not settings.bot_token:
         raise ValueError("Не найден BOT_TOKEN в .env")
@@ -119,6 +127,8 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode="HTML"),
     )
     dp = Dispatcher()
+
+    configure_game_timer_service(dp)
 
     dp.update.middleware(DatabaseSessionMiddleware())
 

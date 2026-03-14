@@ -4,16 +4,16 @@
 Модель таблицы ui_texts.
 
 Отвечает за:
-- хранение всех текстов интерфейса;
+- хранение текстов интерфейса;
 - хранение надписей на кнопках;
-- хранение игровых кнопок с дополнительной разметкой по уровням меню.
+- хранение параметров игровых кнопок для динамического меню.
 
 Как работает:
-- каждая запись хранится по принципу ключ-значение;
-- alias — уникальный ключ;
+- alias — уникальный ключ текста;
 - value — отображаемый текст;
 - type — тип записи: text или button;
-- game, level, order используются для динамического построения игровых меню.
+- game, level, order используются для построения игровых меню;
+- game_alias связывает кнопку второго уровня с конкретным промтом.
 
 Что принимает:
 - данные UI-текста.
@@ -34,27 +34,27 @@ class UIText(TimestampMixin, Base):
 
     Отвечает за:
     - хранение сообщений интерфейса;
-    - хранение надписей на кнопках;
-    - хранение параметров игровых кнопок для динамического меню.
+    - хранение кнопок;
+    - хранение параметров игровых кнопок.
 
     Как работает:
     - alias является уникальным идентификатором текста;
     - value содержит отображаемый текст;
-    - type показывает, это кнопка или текстовое сообщение;
-    - game хранит alias игры, например game_0;
-    - level хранит уровень меню:
-      - 0 — главное меню игры;
-      - 1 — внутреннее меню конкретной игры;
-    - order хранит порядок показа кнопки в меню.
+    - type показывает, это кнопка или обычный текст;
+    - game хранит game_id, например game_0;
+    - level хранит уровень меню;
+    - order хранит порядок показа;
+    - game_alias связывает кнопку с конкретным промтом.
 
     Что принимает:
     - alias: уникальный ключ;
     - value: текст;
     - type: тип записи;
     - description: служебное описание;
-    - game: alias игры или null;
+    - game: game_id или null;
     - level: уровень меню или null;
-    - order: порядок показа или null;
+    - order: порядок вывода или null;
+    - game_alias: alias промта или null;
     - is_active: флаг активности.
 
     Что возвращает:
@@ -71,6 +71,7 @@ class UIText(TimestampMixin, Base):
 
     game: Mapped[str | None] = mapped_column(String(50), nullable=True)
     level: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    order: Mapped[int | None] = mapped_column("order", Integer, nullable=True)
+    game_alias: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

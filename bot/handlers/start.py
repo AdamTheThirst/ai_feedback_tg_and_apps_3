@@ -6,25 +6,29 @@
 Отвечают за:
 - команду /start;
 - вывод стартового приветствия;
-- вывод стартового меню с inline-кнопками;
-- обработку заглушек Энциклопедия и Личный кабинет.
+- вывод стартового меню;
+- обработку заглушек Энциклопедия и Личный кабинет;
+- выход из активного игрового диалога при необходимости.
 
 Как работает:
 - очищает текущее состояние;
-- переводит пользователя в базовое состояние FSM;
-- получает тексты из базы;
-- отправляет приветствие и клавиатуру.
+- отменяет активный таймер игрового диалога;
+- переводит пользователя в базовое состояние;
+- получает тексты и список игр из БД;
+- отправляет стартовое сообщение с клавиатурой.
 
 Что принимает:
-- входящие сообщения и callback-запросы Telegram;
+- сообщения Telegram;
+- callback-запросы Telegram;
 - FSMContext;
-- сессию базы данных.
+- сессию БД.
 
 Что возвращает:
 - ничего.
 """
 
 import json
+import logging
 from html import escape
 
 from aiogram import F, Router
@@ -35,27 +39,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.main_keyboards import build_start_menu_keyboard
 from bot.states.common import MainMenuStates
+from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
+from services.game_timer import cancel_dialog_timer
 
 
 router = Router(name="start-router")
+logger = logging.getLogger(__name__)
 
 
 def build_technical_user_block(message: Message) -> str:
     """
     Собирает технический блок с данными пользователя.
 
-    Отвечает за:
-    - формирование отладочной информации для текущего пользователя.
-
-    Как работает:
-    - берёт chat_id;
-    - берёт user_id;
-    - берёт все доступные данные из объекта from_user;
-    - превращает их в красивую строку.
-
     Что принимает:
-    - message: входящее сообщение Telegram.
+    - message: входящее сообщение.
 
     Что возвращает:
     - строку с технической информацией.
@@ -92,40 +90,30 @@ async def send_start_screen(
     """
     Отправляет пользователю стартовый экран приложения.
 
-    Отвечает за:
-    - перевод пользователя в исходное состояние FSM;
-    - получение стартового приветствия из БД;
-    - получение кнопок стартового меню;
-    - добавление технической информации в сообщение.
-
-    Как работает:
-    - очищает текущее состояние;
-    - устанавливает MainMenuStates.idle;
-    - получает текст start_greeting из базы;
-    - получает игровые кнопки первого уровня;
-    - получает тексты кнопок-заглушек;
-    - отправляет итоговое сообщение пользователю.
-
     Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
+    - message: входящее сообщение;
+    - state: FSMContext;
+    - session: активная сессия БД.
 
     Что возвращает:
     - ничего.
     """
 
+    if message.from_user is not None:
+        await cancel_dialog_timer(message.from_user.id)
+
     await state.clear()
     await state.set_state(MainMenuStates.idle)
 
     ui_repo = UITextRepository(session)
+    game_repo = GameRepository(session)
 
     start_text = await ui_repo.get_by_alias("start_greeting")
     greeting_text = "Привет, это текст приветствия первого экрана"
     if start_text is not None and start_text.is_active:
         greeting_text = start_text.value
 
-    first_level_game_buttons = await ui_repo.get_game_buttons(level=0)
+    games = await game_repo.list_all()
     static_buttons = await ui_repo.get_many_by_aliases(
         ["btn_encyclopedia", "btn_profile"]
     )
@@ -134,7 +122,7 @@ async def send_start_screen(
     profile_text = static_buttons["btn_profile"].value
 
     keyboard = build_start_menu_keyboard(
-        first_level_game_buttons=first_level_game_buttons,
+        games=games,
         encyclopedia_text=encyclopedia_text,
         profile_text=profile_text,
     )
@@ -143,6 +131,12 @@ async def send_start_screen(
     technical_info = build_technical_user_block(message)
 
     final_text = f"{escape(greeting_text)}{technical_info}"
+
+    logger.info(
+        "Показан стартовый экран. user_id=%s chat_id=%s",
+        message.from_user.id if message.from_user else None,
+        message.chat.id,
+    )
     await message.answer(final_text, reply_markup=keyboard)
 
 
@@ -155,18 +149,10 @@ async def start_command_handler(
     """
     Обрабатывает команду /start.
 
-    Отвечает за:
-    - запуск стартового сценария приложения;
-    - выход из админки и других состояний;
-    - показ первого экрана.
-
-    Как работает:
-    - вызывает общую функцию send_start_screen.
-
     Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
+    - message: входящее сообщение;
+    - state: FSMContext;
+    - session: активная сессия БД.
 
     Что возвращает:
     - ничего.
@@ -178,14 +164,7 @@ async def start_command_handler(
 @router.callback_query(F.data == "main:stub:encyclopedia")
 async def encyclopedia_stub_handler(callback: CallbackQuery) -> None:
     """
-    Обрабатывает нажатие на кнопку Энциклопедия.
-
-    Отвечает за:
-    - временную заглушку для неактивного раздела.
-
-    Как работает:
-    - отвечает на callback;
-    - отправляет пользователю временное сообщение.
+    Обрабатывает кнопку Энциклопедия.
 
     Что принимает:
     - callback: callback-запрос Telegram.
@@ -206,14 +185,7 @@ async def encyclopedia_stub_handler(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "main:stub:profile")
 async def profile_stub_handler(callback: CallbackQuery) -> None:
     """
-    Обрабатывает нажатие на кнопку Личный кабинет.
-
-    Отвечает за:
-    - временную заглушку для неактивного раздела.
-
-    Как работает:
-    - отвечает на callback;
-    - отправляет пользователю временное сообщение.
+    Обрабатывает кнопку Личный кабинет.
 
     Что принимает:
     - callback: callback-запрос Telegram.

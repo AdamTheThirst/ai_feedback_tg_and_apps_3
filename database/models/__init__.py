@@ -4,11 +4,11 @@
 Пакетный модуль моделей.
 
 Отвечает за:
-- удобный импорт всех моделей из одного места;
-- регистрацию моделей в metadata SQLAlchemy перед созданием таблиц.
+- удобный импорт всех моделей в одном месте;
+- регистрацию моделей в metadata SQLAlchemy.
 
 Как работает:
-- импортирует все ORM-модели, которые должны участвовать в create_all.
+- импортирует все ORM-модели проекта, которые должны участвовать в create_all.
 
 Что принимает:
 - ничего.
@@ -18,7 +18,19 @@
 """
 
 from database.models.admin_login_incident import AdminLoginIncident
+from database.models.app_log import AppLog
+from database.models.dialog_message import DialogMessage
+from database.models.game import Game
+from database.models.game_prompt import GamePrompt
 from database.models.password import Password
 from database.models.ui_text import UIText
 
-__all__ = ["AdminLoginIncident", "Password", "UIText"]
+__all__ = [
+    "AdminLoginIncident",
+    "AppLog",
+    "DialogMessage",
+    "Game",
+    "GamePrompt",
+    "Password",
+    "UIText",
+]

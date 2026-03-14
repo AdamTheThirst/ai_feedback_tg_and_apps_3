@@ -1,6 +1,5 @@
-# requirements.txt
-
 aiogram==3.20.0.post0
 SQLAlchemy==2.0.38
 aiosqlite==0.21.0
 python-dotenv==1.0.1
+openai>=1.0.0
