@@ -9,7 +9,8 @@
 - получение игровых кнопок;
 - создание записей по умолчанию;
 - мягкую дозапись новых служебных полей в старые записи;
-- обновление текста.
+- обновление текста;
+- удаление игровых текстов и кнопок по game_id.
 
 Как работает:
 - скрывает SQLAlchemy-запросы от обработчиков;
@@ -22,7 +23,7 @@
 - ORM-объекты UIText и коллекции объектов UIText.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models.ui_text import UIText
@@ -36,7 +37,8 @@ class UITextRepository:
     - чтение UI-текстов;
     - чтение игровых кнопок;
     - создание и дозаполнение дефолтных записей;
-    - изменение текстов.
+    - изменение текстов;
+    - удаление игровых текстов и кнопок.
 
     Как работает:
     - получает сессию в конструкторе;
@@ -253,4 +255,20 @@ class UITextRepository:
             return
 
         item.value = new_value
+        await self.session.commit()
+
+    async def delete_by_game_id(self, game_id: str) -> None:
+        """
+        Удаляет игровые тексты и кнопки по game_id.
+
+        Что принимает:
+        - game_id: системный game_id игры.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(UIText).where(UIText.game == game_id)
+        )
         await self.session.commit()

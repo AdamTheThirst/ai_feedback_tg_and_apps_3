@@ -8,7 +8,7 @@
 - получение игры по game_id;
 - создание игры;
 - генерацию следующего game_id;
-- создание дефолтных записей.
+- удаление игры.
 
 Как работает:
 - инкапсулирует SQLAlchemy-запросы;
@@ -23,7 +23,7 @@
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models.game import Game
@@ -36,7 +36,8 @@ class GameRepository:
     Отвечает за:
     - чтение игр;
     - создание игр;
-    - расчёт следующего game_id.
+    - расчёт следующего game_id;
+    - удаление игр.
 
     Как работает:
     - получает активную сессию в конструкторе;
@@ -156,3 +157,19 @@ class GameRepository:
         await self.session.commit()
         await self.session.refresh(item)
         return item
+
+    async def delete_by_game_id(self, game_id: str) -> None:
+        """
+        Удаляет игру по game_id.
+
+        Что принимает:
+        - game_id: системный game_id.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(Game).where(Game.game_id == game_id)
+        )
+        await self.session.commit()

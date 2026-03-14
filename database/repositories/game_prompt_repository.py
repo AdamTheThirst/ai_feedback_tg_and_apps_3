@@ -5,9 +5,11 @@
 
 Отвечает за:
 - получение промта по alias;
+- получение списка промтов по game_id;
 - создание промта;
 - создание дефолтного промта, если он отсутствует;
-- обновление данных изображения.
+- обновление данных изображения;
+- удаление промтов игры.
 
 Как работает:
 - скрывает SQLAlchemy-запросы от обработчиков;
@@ -20,7 +22,7 @@
 - ORM-объекты GamePrompt.
 """
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models.game_prompt import GamePrompt
@@ -33,7 +35,8 @@ class GamePromptRepository:
     Отвечает за:
     - чтение промтов;
     - создание промтов;
-    - обновление изображения у промта.
+    - обновление изображения у промта;
+    - удаление промтов игры.
 
     Как работает:
     - работает поверх ORM SQLAlchemy;
@@ -74,6 +77,24 @@ class GamePromptRepository:
             select(GamePrompt).where(GamePrompt.alias == alias)
         )
         return result.scalar_one_or_none()
+
+    async def list_by_game_id(self, game_id: str) -> list[GamePrompt]:
+        """
+        Получает все промты игры по game_id.
+
+        Что принимает:
+        - game_id: системный game_id игры.
+
+        Что возвращает:
+        - список объектов GamePrompt.
+        """
+
+        result = await self.session.execute(
+            select(GamePrompt)
+            .where(GamePrompt.game_id == game_id)
+            .order_by(GamePrompt.id.asc())
+        )
+        return list(result.scalars().all())
 
     async def create_if_missing(
         self,
@@ -183,4 +204,20 @@ class GamePromptRepository:
 
         item.img_path = img_path
         item.img_id = img_id
+        await self.session.commit()
+
+    async def delete_by_game_id(self, game_id: str) -> None:
+        """
+        Удаляет все промты игры по game_id.
+
+        Что принимает:
+        - game_id: системный game_id игры.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(GamePrompt).where(GamePrompt.game_id == game_id)
+        )
         await self.session.commit()

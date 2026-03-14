@@ -6,6 +6,7 @@
 Отвечает за:
 - сборку inline-клавиатур административного меню;
 - сборку клавиатуры раздела работы с промтами и играми;
+- сборку клавиатуры списка игр;
 - сборку клавиатур подтверждения;
 - сборку списка всех кнопок системы для редактирования.
 
@@ -15,7 +16,8 @@
 
 Что принимает:
 - словари текстов кнопок;
-- список кнопок из базы.
+- список кнопок из базы;
+- список игр из базы.
 
 Что возвращает:
 - готовые inline-клавиатуры.
@@ -24,19 +26,13 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from database.models.game import Game
 from database.models.ui_text import UIText
 
 
 def build_admin_main_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMarkup:
     """
     Собирает основную клавиатуру админки.
-
-    Отвечает за:
-    - отображение главных действий административного меню.
-
-    Как работает:
-    - получает словарь alias -> текст кнопки;
-    - создаёт inline-кнопки с фиксированными callback_data.
 
     Что принимает:
     - button_texts: словарь с текстами кнопок.
@@ -78,13 +74,6 @@ def build_admin_tools_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMa
     """
     Собирает клавиатуру раздела работы с промтами и играми.
 
-    Отвечает за:
-    - отображение действий над играми и промтами.
-
-    Как работает:
-    - получает словарь alias -> текст кнопки;
-    - создаёт inline-кнопки с фиксированными callback_data.
-
     Что принимает:
     - button_texts: словарь с текстами кнопок.
 
@@ -125,6 +114,34 @@ def build_admin_tools_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMa
     return builder.as_markup()
 
 
+def build_games_list_keyboard(
+    games: list[Game],
+    cancel_text: str,
+) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру списка игр.
+
+    Что принимает:
+    - games: список игр;
+    - cancel_text: текст кнопки возврата.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+
+    for game in games:
+        builder.button(
+            text=game.name,
+            callback_data=f"admin:delete_game_select:{game.game_id}",
+        )
+
+    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def build_confirm_keyboard(
     edit_text: str,
     cancel_text: str,
@@ -133,17 +150,10 @@ def build_confirm_keyboard(
     """
     Собирает клавиатуру подтверждения действия.
 
-    Отвечает за:
-    - вывод кнопок "Изменить" и "Отмена" для сценариев редактирования.
-
-    Как работает:
-    - принимает текст кнопок и callback для кнопки изменения;
-    - callback отмены всегда возвращает в главное меню админки.
-
     Что принимает:
     - edit_text: текст кнопки подтверждения;
     - cancel_text: текст кнопки отмены;
-    - edit_callback: callback_data для кнопки изменения.
+    - edit_callback: callback_data для кнопки подтверждения.
 
     Что возвращает:
     - объект InlineKeyboardMarkup.
@@ -162,14 +172,6 @@ def build_buttons_list_keyboard(
 ) -> InlineKeyboardMarkup:
     """
     Собирает клавиатуру со всеми кнопками системы.
-
-    Отвечает за:
-    - отображение списка всех редактируемых кнопок для выбора.
-
-    Как работает:
-    - для каждой кнопки из базы создаёт отдельную inline-кнопку;
-    - в callback_data кладёт alias выбранной кнопки;
-    - внизу добавляет кнопку отмены.
 
     Что принимает:
     - buttons: список кнопок из базы;

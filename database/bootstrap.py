@@ -25,8 +25,16 @@
 from sqlalchemy import text
 
 from database.base import Base
-from database.models import AppLog, DialogMessage, Game, GamePrompt, Password, UIText  # noqa: F401
-from database.models import AdminLoginIncident  # noqa: F401
+from database.models import (
+    AdminLoginIncident,
+    AppLog,
+    DeletedPrompt,
+    DialogMessage,
+    Game,
+    GamePrompt,
+    Password,
+    UIText,
+)  # noqa: F401
 from database.repositories.game_prompt_repository import GamePromptRepository
 from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
@@ -238,7 +246,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "alias": "admin_button_tools_add_prompt",
         "value": "Добавить промт",
         "text_type": "button",
-        "description": "Кнопка добавления нового промта",
+        "description": "Кнопка добавления промта",
         "game": None,
         "level": None,
         "order": None,
@@ -248,7 +256,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "alias": "admin_button_tools_edit_prompts",
         "value": "Изменить промты",
         "text_type": "button",
-        "description": "Кнопка редактирования существующих промтов",
+        "description": "Кнопка изменения промтов",
         "game": None,
         "level": None,
         "order": None,

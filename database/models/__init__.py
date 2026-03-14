@@ -19,6 +19,7 @@
 
 from database.models.admin_login_incident import AdminLoginIncident
 from database.models.app_log import AppLog
+from database.models.deleted_prompt import DeletedPrompt
 from database.models.dialog_message import DialogMessage
 from database.models.game import Game
 from database.models.game_prompt import GamePrompt
@@ -28,6 +29,7 @@ from database.models.ui_text import UIText
 __all__ = [
     "AdminLoginIncident",
     "AppLog",
+    "DeletedPrompt",
     "DialogMessage",
     "Game",
     "GamePrompt",
