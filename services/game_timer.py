@@ -6,12 +6,15 @@
 Отвечает за:
 - запуск таймера завершения диалога;
 - отмену таймера;
-- автоматическое завершение диалога по времени.
+- автоматическое завершение диалога по времени;
+- запуск аналитики после окончания времени;
+- возврат пользователя на стартовый экран после аналитики.
 
 Как работает:
 - хранит in-memory задачи asyncio по user_id;
 - через Dispatcher получает доступ к FSM-контексту пользователя;
-- по истечении времени завершает диалог и возвращает пользователя в меню игры.
+- по истечении времени переводит диалог в режим аналитики;
+- после аналитики отправляет стартовый экран.
 
 Важно:
 - таймер живёт в памяти процесса;
@@ -35,10 +38,9 @@ import logging
 
 from aiogram import Bot, Dispatcher
 
-from database.repositories.ui_text_repository import UITextRepository
-from database.session import SessionFactory
+from bot.states.game import GameStates
 from services.app_logger import AppLogger
-
+from services.dialog_analytics import run_dialog_analysis_and_send_results
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,7 @@ async def cancel_dialog_timer(user_id: int) -> None:
         return
 
     task.cancel()
+
     with suppress(asyncio.CancelledError):
         await task
 
@@ -137,9 +140,9 @@ async def _dialog_timeout_worker(
     Как работает:
     - ждёт timeout_seconds;
     - проверяет, что у пользователя всё ещё активен именно этот dialog_id;
-    - очищает состояние;
-    - отправляет сообщение о завершении;
-    - возвращает пользователя в меню игры.
+    - переводит FSM в режим аналитики;
+    - запускает аналитику;
+    - после аналитики отправляет стартовый экран.
 
     Что принимает:
     - bot: объект Telegram-бота;
@@ -156,7 +159,11 @@ async def _dialog_timeout_worker(
     try:
         await asyncio.sleep(timeout_seconds)
     except asyncio.CancelledError:
-        logger.info("Таймер диалога отменён. user_id=%s dialog_id=%s", user_id, dialog_id)
+        logger.info(
+            "Таймер диалога отменён. user_id=%s dialog_id=%s",
+            user_id,
+            dialog_id,
+        )
         raise
 
     try:
@@ -169,51 +176,53 @@ async def _dialog_timeout_worker(
             chat_id=chat_id,
             user_id=user_id,
         )
-        data = await state.get_data()
 
+        data = await state.get_data()
         current_dialog_id = data.get("dialog_id")
         current_game_id = data.get("game_id")
 
         if current_dialog_id != dialog_id or current_game_id != game_id:
             return
 
-        await state.clear()
+        await state.set_state(GameStates.analyzing_dialog)
         _timer_tasks.pop(user_id, None)
 
+        await AppLogger.info(
+            event="dialog.timeout",
+            source=__name__,
+            message="Диалог завершён по таймеру, запускаем аналитику",
+            payload={
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "dialog_id": dialog_id,
+                "game_id": game_id,
+            },
+            write_to_db=True,
+        )
+
+        from database.session import SessionFactory
+        from bot.handlers.start import send_start_screen_by_bot
+
         async with SessionFactory() as session:
-            ui_repo = UITextRepository(session)
-            timeout_item = await ui_repo.get_by_alias("dialog_timeout_message")
-            timeout_text = (
-                timeout_item.value
-                if timeout_item is not None and timeout_item.is_active
-                else "Время диалога истекло. Возвращаю к выбору сценария."
-            )
-
-            await AppLogger.info(
-                event="dialog.timeout",
-                source=__name__,
-                message="Диалог завершён по таймеру",
-                payload={
-                    "user_id": user_id,
-                    "chat_id": chat_id,
-                    "dialog_id": dialog_id,
-                    "game_id": game_id,
-                },
-                write_to_db=True,
-            )
-
-            await bot.send_message(chat_id=chat_id, text=timeout_text)
-
-            from bot.handlers.game import send_game_root_menu_by_bot
-
-            await send_game_root_menu_by_bot(
+            await run_dialog_analysis_and_send_results(
                 bot=bot,
                 chat_id=chat_id,
                 session=session,
+                dialog_id=dialog_id,
                 game_id=game_id,
             )
+
+            await send_start_screen_by_bot(
+                bot=bot,
+                chat_id=chat_id,
+                user_id=user_id,
+                session=session,
+                state=state,
+            )
+
     except Exception as error:  # noqa: BLE001
         logger.exception("Ошибка в таймере диалога: %s", error)
+
         await AppLogger.error(
             event="dialog.timeout_error",
             source=__name__,
@@ -227,3 +236,8 @@ async def _dialog_timeout_worker(
             },
             write_to_db=True,
         )
+
+    finally:
+        current_task = asyncio.current_task()
+        if _timer_tasks.get(user_id) is current_task:
+            _timer_tasks.pop(user_id, None)

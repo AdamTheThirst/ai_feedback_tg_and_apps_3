@@ -6,11 +6,13 @@
 Отвечает за:
 - сохранение сообщений диалога;
 - получение последних сообщений диалога для контекста ИИ;
+- получение всех сообщений диалога для аналитики;
 - удаление сообщений по игре и промту.
 
 Как работает:
 - добавляет новые строки в таблицу dialog_messages;
 - выбирает последние сообщения по dialog_id;
+- выбирает весь диалог по dialog_id в хронологическом порядке;
 - удаляет сообщения по game_id или subgame_id.
 
 Что принимает:
@@ -33,6 +35,7 @@ class DialogMessageRepository:
     Отвечает за:
     - запись реплик диалога;
     - чтение последних реплик диалога;
+    - чтение всего диалога;
     - удаление сообщений игры;
     - удаление сообщений конкретного промта.
 
@@ -122,6 +125,29 @@ class DialogMessageRepository:
         rows = list(result.scalars().all())
         rows.reverse()
         return rows
+
+    async def get_all_messages(self, dialog_id: str) -> list[DialogMessage]:
+        """
+        Получает все сообщения диалога в правильном порядке для аналитики.
+
+        Как работает:
+        - выбирает все записи по dialog_id;
+        - сортирует по created_at;
+        - добавляет сортировку по id как запасной вариант.
+
+        Что принимает:
+        - dialog_id: id диалога.
+
+        Что возвращает:
+        - список всех сообщений диалога.
+        """
+
+        result = await self.session.execute(
+            select(DialogMessage)
+            .where(DialogMessage.dialog_id == dialog_id)
+            .order_by(DialogMessage.created_at.asc(), DialogMessage.id.asc())
+        )
+        return list(result.scalars().all())
 
     async def delete_by_game_id(self, game_id: str) -> None:
         """

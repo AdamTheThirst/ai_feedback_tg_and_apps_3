@@ -7,6 +7,7 @@
 - создание аналитических промтов;
 - получение одного аналитического промта;
 - получение списка аналитических промтов;
+- получение аналитических промтов по конкретной игре;
 - обновление аналитического промта;
 - удаление аналитического промта.
 
@@ -94,6 +95,28 @@ class AnalyticsPromptRepository:
                 AnalyticsPrompt.game.asc(),
                 AnalyticsPrompt.id.asc(),
             )
+        )
+        return list(result.scalars().all())
+
+    async def list_by_game(self, game_id: str) -> list[AnalyticsPrompt]:
+        """
+        Получает список аналитических промтов для конкретной игры.
+
+        Как работает:
+        - выбирает записи по полю game;
+        - сортирует их по id в порядке создания.
+
+        Что принимает:
+        - game_id: системный game_id игры.
+
+        Что возвращает:
+        - список объектов AnalyticsPrompt.
+        """
+
+        result = await self.session.execute(
+            select(AnalyticsPrompt)
+            .where(AnalyticsPrompt.game == game_id)
+            .order_by(AnalyticsPrompt.id.asc())
         )
         return list(result.scalars().all())
 

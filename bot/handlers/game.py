@@ -9,7 +9,8 @@
 - ведение игрового диалога;
 - завершение диалога по кнопке;
 - работу таймера диалога;
-- возврат к меню игры после завершения.
+- запуск аналитики после завершения диалога;
+- возврат на стартовый экран после аналитики.
 
 Как работает:
 - верхний уровень игр строится из таблицы games;
@@ -17,7 +18,8 @@
 - конкретный сценарий берётся через связку ui_texts.game_alias -> game_prompts.alias;
 - весь диалог пишется в dialog_messages;
 - для ИИ берутся последние 15 пар сообщений;
-- ответ ИИ приходит через OpenAI-compatible API.
+- ответ ИИ приходит через OpenAI-compatible API;
+- после завершения диалога запускается аналитика по таблице analytics_prompts.
 
 Что принимает:
 - сообщения и callback-запросы Telegram;
@@ -49,9 +51,9 @@ from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
 from services.ai_client import generate_ai_reply
 from services.app_logger import AppLogger
+from services.dialog_analytics import run_dialog_analysis_and_send_results
 from services.game_timer import cancel_dialog_timer, schedule_dialog_timer
 from services.images import send_prompt_image_to_chat
-
 
 router = Router(name="game-router")
 logger = logging.getLogger(__name__)
@@ -188,11 +190,11 @@ async def open_game_root_from_main_handler(
     """
 
     await callback.answer()
-
     if callback.message is None:
         return
 
     game_id = callback.data.split("main:game_root:", maxsplit=1)[1]
+
     logger.info("Открыто меню игры. game_id=%s", game_id)
     await send_game_root_menu(callback.message, session, game_id)
 
@@ -221,11 +223,13 @@ async def game_command_handler(
     await state.clear()
 
     game_id = (message.text or "").replace("/", "", 1).strip()
+
     logger.info(
         "Открытие меню игры по команде. user_id=%s game_id=%s",
         message.from_user.id if message.from_user else None,
         game_id,
     )
+
     await send_game_root_menu(message, session, game_id)
 
 
@@ -320,6 +324,7 @@ async def start_game_dialog_handler(
         prompt.alias,
         dialog_id,
     )
+
     await AppLogger.info(
         event="dialog.start",
         source=__name__,
@@ -350,6 +355,7 @@ async def start_game_dialog_handler(
     )
 
     await callback.message.answer(escape(greeting_text))
+
     await dialog_repo.create_message(
         user_id=callback.from_user.id,
         dialog_id=dialog_id,
@@ -451,6 +457,7 @@ async def game_dialog_message_handler(
         if thinking_item is not None and thinking_item.is_active
         else "[Думаю...]"
     )
+
     thinking_message = await message.answer(escape(thinking_text))
 
     history_rows = await dialog_repo.get_recent_messages(dialog_id=dialog_id, limit=30)
@@ -497,9 +504,7 @@ async def game_dialog_message_handler(
             write_to_db=True,
         )
 
-        await message.answer(
-            "Не удалось получить ответ ИИ. Попробуйте отправить сообщение ещё раз."
-        )
+        await message.answer("Не удалось получить ответ ИИ. Попробуйте отправить сообщение ещё раз.")
         return
 
     try:
@@ -555,14 +560,16 @@ async def finish_dialog_handler(
     callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
     """
-    Завершает игровой диалог по кнопке пользователя.
+    Завершает игровой диалог по кнопке пользователя и запускает аналитику.
 
     Что принимает:
     - callback: callback-запрос;
     - state: FSMContext;
-    - session: активная сессия БД.
+    - session: активная сессия БД;
+    - bot: объект Telegram-бота.
 
     Что возвращает:
     - ничего.
@@ -578,19 +585,25 @@ async def finish_dialog_handler(
     game_id = data.get("game_id")
 
     await cancel_dialog_timer(callback.from_user.id)
-    await state.clear()
 
-    finished_item = await UITextRepository(session).get_by_alias("dialog_finished_message")
-    finished_text = (
-        finished_item.value
-        if finished_item is not None and finished_item.is_active
-        else "Диалог завершён. Возвращаю к выбору сценария."
-    )
+    if not dialog_id or not game_id:
+        from bot.handlers.start import send_start_screen_by_bot
+
+        await send_start_screen_by_bot(
+            bot=bot,
+            chat_id=callback.message.chat.id,
+            user_id=callback.from_user.id,
+            session=session,
+            state=state,
+        )
+        return
+
+    await state.set_state(GameStates.analyzing_dialog)
 
     await AppLogger.info(
         event="dialog.finish_by_user",
         source=__name__,
-        message="Диалог завершён пользователем",
+        message="Диалог завершён пользователем, запускаем аналитику",
         payload={
             "user_id": callback.from_user.id,
             "game_id": game_id,
@@ -599,7 +612,20 @@ async def finish_dialog_handler(
         write_to_db=True,
     )
 
-    await callback.message.answer(escape(finished_text))
+    await run_dialog_analysis_and_send_results(
+        bot=bot,
+        chat_id=callback.message.chat.id,
+        session=session,
+        dialog_id=dialog_id,
+        game_id=game_id,
+    )
 
-    if game_id:
-        await send_game_root_menu(callback.message, session, game_id)
+    from bot.handlers.start import send_start_screen_by_bot
+
+    await send_start_screen_by_bot(
+        bot=bot,
+        chat_id=callback.message.chat.id,
+        user_id=callback.from_user.id,
+        session=session,
+        state=state,
+    )

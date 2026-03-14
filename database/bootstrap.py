@@ -41,7 +41,6 @@ from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
 from database.session import SessionFactory, engine
 
-
 DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
     {
         "alias": "start_greeting",
@@ -165,7 +164,7 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
     },
     {
         "alias": "dialog_finished_message",
-        "value": "Диалог завершён. Возвращаю к выбору сценария.",
+        "value": "Диалог завершён.\nВозвращаю к выбору сценария.",
         "text_type": "text",
         "description": "Сообщение после ручного завершения диалога",
         "game": None,
@@ -175,9 +174,49 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
     },
     {
         "alias": "dialog_timeout_message",
-        "value": "Время диалога истекло. Возвращаю к выбору сценария.",
+        "value": "Время диалога истекло.\nВозвращаю к выбору сценария.",
         "text_type": "text",
         "description": "Сообщение после автоматического завершения диалога по таймеру",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "analysis_in_progress_message",
+        "value": "Идёт анализ. Это может занять несколько минут, пожалуйста, подождите",
+        "text_type": "text",
+        "description": "Сообщение пользователю на время выполнения аналитики завершённого диалога",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "analysis_no_prompts_message",
+        "value": "Для этой игры пока не настроена аналитика.",
+        "text_type": "text",
+        "description": "Сообщение, если для игры не найдено ни одного аналитического промта",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "analysis_empty_dialog_message",
+        "value": "Не удалось найти сообщения диалога для анализа.",
+        "text_type": "text",
+        "description": "Сообщение, если диалог пуст и аналитика невозможна",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
+        "alias": "analysis_total_score_message",
+        "value": "Общая сумма баллов: {score}",
+        "text_type": "text",
+        "description": "Сообщение с общей суммой баллов по завершении аналитики",
         "game": None,
         "level": None,
         "order": None,
