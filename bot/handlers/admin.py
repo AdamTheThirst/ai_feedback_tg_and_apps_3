@@ -16,6 +16,7 @@
 - редактирование текстов кнопок;
 - смену пароля администратора;
 - добавление новой игры;
+- добавление нового аналитического промта;
 - удаление игры;
 - выход из админки.
 
@@ -35,8 +36,10 @@
 - ничего.
 """
 
+from contextlib import suppress
 from html import escape
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -52,17 +55,20 @@ from bot.keyboards.admin_keyboards import (
     build_buttons_list_keyboard,
     build_confirm_keyboard,
     build_games_selection_keyboard,
+    build_post_create_analytics_keyboard,
 )
 from bot.states.admin import AdminStates
 from database.repositories.admin_login_incident_repository import (
     AdminLoginIncidentRepository,
 )
+from database.repositories.analytics_prompt_repository import AnalyticsPromptRepository
 from database.repositories.deleted_prompt_repository import DeletedPromptRepository
 from database.repositories.dialog_message_repository import DialogMessageRepository
 from database.repositories.game_prompt_repository import GamePromptRepository
 from database.repositories.game_repository import GameRepository
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
+from services.analytics_ai import generate_analytics_metadata
 from services.security import hash_password, verify_password
 
 router = Router(name="admin-router")
@@ -299,6 +305,137 @@ async def register_unauthorized_admin_attempt(
     )
 
 
+def sanitize_alias(raw_alias: str) -> str:
+    """
+    Приводит alias к безопасному формату.
+
+    Что принимает:
+    - raw_alias: алиас от ИИ.
+
+    Что возвращает:
+    - безопасный alias.
+    """
+
+    alias = raw_alias.lower().strip()
+    alias = re.sub(r"[^a-z0-9_]+", "_", alias)
+    alias = re.sub(r"_+", "_", alias).strip("_")
+
+    if not alias:
+        return "analytics_prompt"
+
+    return alias[:80]
+
+
+async def generate_unique_analytics_alias(
+    repo: AnalyticsPromptRepository,
+    raw_alias: str,
+) -> str:
+    """
+    Генерирует уникальный alias аналитического промта.
+
+    Что принимает:
+    - repo: репозиторий аналитических промтов;
+    - raw_alias: сырой alias от ИИ.
+
+    Что возвращает:
+    - уникальный alias аналитики.
+    """
+
+    base_alias = sanitize_alias(raw_alias)
+    alias = base_alias
+    counter = 2
+
+    while await repo.get_by_alias(alias) is not None:
+        alias = f"{base_alias}_{counter}"
+        counter += 1
+
+    return alias
+
+
+async def finalize_new_analytics_creation(
+    target_message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Завершает сценарий создания нового аналитического промта.
+
+    Что принимает:
+    - target_message: сообщение, через которое отправляется ответ;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    data = await state.get_data()
+    guest_mode = await is_guest_admin_session(state)
+
+    game_id = data.get("analytics_game_id")
+    game_name = data.get("analytics_game_name")
+    prompt_text = data.get("analytics_prompt_text")
+
+    if not game_id or not game_name or not prompt_text:
+        await target_message.answer("Не удалось собрать данные для аналитики.")
+        await send_admin_analytics_menu(target_message, state, session)
+        return
+
+    wait_message = await target_message.answer("Подготовка и запись")
+
+    if guest_mode:
+        with suppress(Exception):
+            await wait_message.delete()
+
+        await target_message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        await send_admin_analytics_menu(target_message, state, session)
+        return
+
+    repo = AnalyticsPromptRepository(session)
+    metadata = await generate_analytics_metadata(prompt_text)
+    unique_alias = await generate_unique_analytics_alias(repo, metadata.alias)
+
+    await repo.create(
+        game=game_id,
+        header=metadata.header,
+        alias=unique_alias,
+        comment=metadata.comment,
+        promt=prompt_text,
+    )
+
+    with suppress(Exception):
+        await wait_message.delete()
+
+    ui_repo = UITextRepository(session)
+    texts = await ui_repo.get_many_by_aliases(
+        [
+            "admin_button_analytics_add_one_more",
+            "admin_button_analytics_back",
+        ]
+    )
+
+    keyboard = build_post_create_analytics_keyboard(
+        add_more_text=texts["admin_button_analytics_add_one_more"].value,
+        back_text=texts["admin_button_analytics_back"].value,
+    )
+
+    await state.set_state(AdminStates.analytics_menu)
+    await state.update_data(
+        last_analytics_game_id=game_id,
+        last_analytics_game_name=game_name,
+        analytics_prompt_text=None,
+    )
+
+    await target_message.answer(
+        f"Записано.\n"
+        f"Игра: {escape(game_name)}\n"
+        f"Header: {escape(metadata.header)}\n"
+        f"Comment: {escape(metadata.comment)}\n"
+        f"Alias: {escape(unique_alias)}",
+        reply_markup=keyboard,
+    )
+
+
 @router.message(Command("admin"))
 async def admin_command_handler(
     message: Message,
@@ -453,14 +590,18 @@ async def admin_analytics_menu_handler(
 
 
 @router.callback_query(F.data == "admin:new_analytics")
-async def admin_new_analytics_handler(callback: CallbackQuery) -> None:
+async def admin_new_analytics_start_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
     """
-    Обрабатывает нажатие на кнопку "Новая аналитика".
-
-    Пока это только заглушка для следующего этапа.
+    Запускает сценарий создания новой аналитики.
 
     Что принимает:
-    - callback: callback-запрос Telegram.
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
 
     Что возвращает:
     - ничего.
@@ -470,19 +611,150 @@ async def admin_new_analytics_handler(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Раздел «Новая аналитика» будет реализован следующим шагом.")
+    games = await GameRepository(session).list_all()
+
+    if not games:
+        await callback.message.answer("Список игр пуст. Сначала добавьте игру.")
+        return
+
+    await state.set_state(AdminStates.waiting_new_analytics_game)
+
+    ui_repo = UITextRepository(session)
+    common_texts = await ui_repo.get_many_by_aliases(["common_cancel_button"])
+
+    keyboard = build_games_selection_keyboard(
+        games=games,
+        cancel_text=common_texts["common_cancel_button"].value,
+        callback_prefix="admin:new_analytics_select_game",
+        cancel_callback="admin:analytics_menu",
+    )
+
+    await callback.message.answer(
+        "Для какой игры добавить аналитику?",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("admin:new_analytics_select_game:"))
+async def admin_new_analytics_select_game_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает выбор игры для новой аналитики.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    game_id = callback.data.split("admin:new_analytics_select_game:", maxsplit=1)[1]
+    game = await GameRepository(session).get_by_game_id(game_id)
+
+    if game is None:
+        await callback.message.answer("Игра не найдена.")
+        return
+
+    await state.update_data(
+        analytics_game_id=game.game_id,
+        analytics_game_name=game.name,
+        last_analytics_game_id=game.game_id,
+        last_analytics_game_name=game.name,
+    )
+    await state.set_state(AdminStates.waiting_new_analytics_prompt)
+    await callback.message.answer("Введите аналитический промт:")
+
+
+@router.message(AdminStates.waiting_new_analytics_prompt)
+async def admin_new_analytics_prompt_handler(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает ввод текста новой аналитики.
+
+    Что принимает:
+    - message: входящее сообщение Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    prompt_text = (message.text or "").strip()
+
+    if len(prompt_text) < 10:
+        await message.answer("Промт слишком короткий.")
+        return
+
+    await state.update_data(analytics_prompt_text=prompt_text)
+    await finalize_new_analytics_creation(message, state, session)
+
+
+@router.callback_query(F.data == "admin:analytics_add_one_more")
+async def admin_analytics_add_one_more_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """
+    Запускает ввод ещё одного аналитического промта для последней выбранной игры.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    data = await state.get_data()
+    game_id = data.get("last_analytics_game_id")
+    game_name = data.get("last_analytics_game_name")
+
+    if not game_id or not game_name:
+        await callback.message.answer("Не удалось определить игру. Выберите её заново.")
+        return
+
+    await state.update_data(
+        analytics_game_id=game_id,
+        analytics_game_name=game_name,
+    )
+    await state.set_state(AdminStates.waiting_new_analytics_prompt)
+    await callback.message.answer(
+        f"Введите ещё один аналитический промт для игры {escape(game_name)}:"
+    )
 
 
 @router.callback_query(F.data == "admin:edit_analytics")
-async def admin_edit_analytics_handler(callback: CallbackQuery) -> None:
+async def admin_edit_analytics_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
     """
     Обрабатывает нажатие на кнопку "Изменить аналитику".
 
-    Пока это только заглушка для следующего этапа.
+    Пока это заготовка для следующего шага.
 
     Что принимает:
-    - callback: callback-запрос Telegram.
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
 
     Что возвращает:
     - ничего.
@@ -492,19 +764,28 @@ async def admin_edit_analytics_handler(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
+    await state.set_state(AdminStates.analytics_menu)
+
     # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Раздел «Изменить аналитику» будет реализован следующим шагом.")
+    await callback.message.answer("ЭТО ЗАГЛУШКА. Изменение аналитики сделаем следующим шагом.")
+    await send_admin_analytics_menu(callback.message, state, session)
 
 
 @router.callback_query(F.data == "admin:delete_analytics")
-async def admin_delete_analytics_handler(callback: CallbackQuery) -> None:
+async def admin_delete_analytics_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
     """
     Обрабатывает нажатие на кнопку "Удалить аналитику".
 
-    Пока это только заглушка для следующего этапа.
+    Пока это заготовка для следующего шага.
 
     Что принимает:
-    - callback: callback-запрос Telegram.
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
 
     Что возвращает:
     - ничего.
@@ -514,8 +795,11 @@ async def admin_delete_analytics_handler(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
+    await state.set_state(AdminStates.analytics_menu)
+
     # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Раздел «Удалить аналитику» будет реализован следующим шагом.")
+    await callback.message.answer("ЭТО ЗАГЛУШКА. Удаление аналитики сделаем следующим шагом.")
+    await send_admin_analytics_menu(callback.message, state, session)
 
 
 @router.callback_query(F.data == "admin:add_game")

@@ -284,6 +284,16 @@ DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
         "game_alias": None,
     },
     {
+        "alias": "admin_button_analytics_add_one_more",
+        "value": "Ещё один промт в эту аналитику",
+        "text_type": "button",
+        "description": "Кнопка добавления ещё одного аналитического промта в ту же игру",
+        "game": None,
+        "level": None,
+        "order": None,
+        "game_alias": None,
+    },
+    {
         "alias": "admin_button_tools_add_game",
         "value": "Добавить игру",
         "text_type": "button",

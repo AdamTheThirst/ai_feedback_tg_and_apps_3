@@ -12,6 +12,7 @@
 - сборку клавиатуры действий редактирования промта;
 - сборку клавиатур подтверждения;
 - сборку клавиатуры пропуска изображения;
+- сборку клавиатуры после создания аналитики;
 - сборку списка всех кнопок системы для редактирования.
 
 Как работает:
@@ -157,6 +158,7 @@ def build_games_selection_keyboard(
     games: list[Game],
     cancel_text: str,
     callback_prefix: str,
+    cancel_callback: str = "admin:back_main",
 ) -> InlineKeyboardMarkup:
     """
     Собирает клавиатуру списка игр.
@@ -164,7 +166,8 @@ def build_games_selection_keyboard(
     Что принимает:
     - games: список игр;
     - cancel_text: текст кнопки возврата;
-    - callback_prefix: префикс callback_data.
+    - callback_prefix: префикс callback_data;
+    - cancel_callback: callback_data кнопки отмены.
 
     Что возвращает:
     - объект InlineKeyboardMarkup.
@@ -178,7 +181,7 @@ def build_games_selection_keyboard(
             callback_data=f"{callback_prefix}:{game.game_id}",
         )
 
-    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.button(text=cancel_text, callback_data=cancel_callback)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -289,6 +292,34 @@ def build_confirm_keyboard(
     builder.button(text=edit_text, callback_data=edit_callback)
     builder.button(text=cancel_text, callback_data="admin:back_main")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def build_post_create_analytics_keyboard(
+    add_more_text: str,
+    back_text: str,
+) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру после успешного создания аналитического промта.
+
+    Что принимает:
+    - add_more_text: текст кнопки добавления ещё одного промта;
+    - back_text: текст кнопки возврата назад.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=add_more_text,
+        callback_data="admin:analytics_add_one_more",
+    )
+    builder.button(
+        text=back_text,
+        callback_data="admin:analytics_menu",
+    )
+    builder.adjust(1)
     return builder.as_markup()
 
 

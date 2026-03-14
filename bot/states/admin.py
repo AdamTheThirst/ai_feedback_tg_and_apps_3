@@ -74,7 +74,7 @@ class AdminStates(StatesGroup):
     waiting_delete_prompt_confirm = State()
     waiting_delete_game_confirm = State()
 
-    # Шаги аналитики будут использоваться на следующем этапе.
+    waiting_new_analytics_game = State()
     waiting_new_analytics_prompt = State()
     waiting_edit_analytics_prompt = State()
     waiting_delete_analytics_confirm = State()
