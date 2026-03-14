@@ -9,10 +9,12 @@
 - вход в гостевой режим по специальному паролю;
 - фиксацию инцидентов несанкционированного входа;
 - показ главного меню админки;
+- показ раздела работы с промтами и играми;
 - редактирование приветствия стартового экрана;
 - редактирование приветствия админки;
 - редактирование текстов кнопок;
 - смену пароля администратора;
+- добавление новой игры;
 - выход из админки.
 
 Как работает:
@@ -43,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.handlers.start import send_start_screen
 from bot.keyboards.admin_keyboards import (
     build_admin_main_keyboard,
+    build_admin_tools_keyboard,
     build_buttons_list_keyboard,
     build_confirm_keyboard,
 )
@@ -50,9 +53,9 @@ from bot.states.admin import AdminStates
 from database.repositories.admin_login_incident_repository import (
     AdminLoginIncidentRepository,
 )
+from database.repositories.game_repository import GameRepository
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
-from services.app_logger import AppLogger
 from services.security import hash_password, verify_password
 
 
@@ -128,6 +131,7 @@ async def send_admin_main_menu(
         "admin_button_edit_admin_greeting",
         "admin_button_edit_buttons",
         "admin_button_change_password",
+        "admin_button_prompt_games_work",
         "admin_button_exit",
     ]
     texts = await ui_repo.get_many_by_aliases(aliases)
@@ -144,11 +148,62 @@ async def send_admin_main_menu(
             "admin_button_edit_admin_greeting": texts["admin_button_edit_admin_greeting"].value,
             "admin_button_edit_buttons": texts["admin_button_edit_buttons"].value,
             "admin_button_change_password": texts["admin_button_change_password"].value,
+            "admin_button_prompt_games_work": texts["admin_button_prompt_games_work"].value,
             "admin_button_exit": texts["admin_button_exit"].value,
         }
     )
 
     await message.answer(escape(greeting_text), reply_markup=keyboard)
+
+
+async def send_admin_tools_menu(
+    message: Message,
+    session: AsyncSession,
+) -> None:
+    """
+    Отправляет пользователю раздел работы с промтами и играми.
+
+    Отвечает за:
+    - показ отдельного меню операций с играми и промтами.
+
+    Как работает:
+    - получает тексты кнопок из таблицы ui_texts;
+    - формирует клавиатуру раздела;
+    - отправляет пользователю сообщение с меню.
+
+    Что принимает:
+    - message: сообщение, через которое отправляется ответ;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    ui_repo = UITextRepository(session)
+    aliases = [
+        "admin_button_tools_add_game",
+        "admin_button_tools_add_prompt",
+        "admin_button_tools_edit_prompts",
+        "admin_button_tools_toggle_prompt",
+        "admin_button_tools_delete_prompt",
+        "admin_button_tools_delete_game",
+        "admin_button_tools_back",
+    ]
+    texts = await ui_repo.get_many_by_aliases(aliases)
+
+    keyboard = build_admin_tools_keyboard(
+        {
+            "admin_button_tools_add_game": texts["admin_button_tools_add_game"].value,
+            "admin_button_tools_add_prompt": texts["admin_button_tools_add_prompt"].value,
+            "admin_button_tools_edit_prompts": texts["admin_button_tools_edit_prompts"].value,
+            "admin_button_tools_toggle_prompt": texts["admin_button_tools_toggle_prompt"].value,
+            "admin_button_tools_delete_prompt": texts["admin_button_tools_delete_prompt"].value,
+            "admin_button_tools_delete_game": texts["admin_button_tools_delete_game"].value,
+            "admin_button_tools_back": texts["admin_button_tools_back"].value,
+        }
+    )
+
+    await message.answer("Работа с промтами и играми", reply_markup=keyboard)
 
 
 async def send_text_preview_screen(
@@ -210,7 +265,7 @@ async def register_unauthorized_admin_attempt(
     Как работает:
     - берёт данные пользователя из объекта Telegram;
     - создаёт запись в таблице admin_login_incidents;
-    - пишет технический лог.
+    - пишет предупреждение в лог.
 
     Что принимает:
     - message: входящее сообщение Telegram;
@@ -236,18 +291,10 @@ async def register_unauthorized_admin_attempt(
         device=device,
     )
 
-    await AppLogger.warning(
-        event="admin.unauthorized_login_attempt",
-        source=__name__,
-        message="Попытка несанкционированного входа в админку",
-        payload={
-            "user_id": message.from_user.id,
-            "username": message.from_user.username,
-            "first_name": message.from_user.first_name,
-            "last_name": message.from_user.last_name,
-            "device": device,
-        },
-        write_to_db=True,
+    logger.warning(
+        "Несанкционированная попытка входа в админку. user_id=%s username=%s",
+        message.from_user.id,
+        message.from_user.username,
     )
 
 
@@ -289,14 +336,9 @@ async def admin_command_handler(
         default_password_hash=hash_password("123"),
     )
 
-    await AppLogger.info(
-        event="admin.login_requested",
-        source=__name__,
-        message="Запрошен вход в админку",
-        payload={
-            "user_id": message.from_user.id if message.from_user else None,
-        },
-        write_to_db=True,
+    logger.info(
+        "Запрошен вход в админку. user_id=%s",
+        message.from_user.id if message.from_user else None,
     )
 
     await state.set_state(AdminStates.waiting_password)
@@ -346,14 +388,9 @@ async def admin_password_input_handler(
     if raw_password == GUEST_ADMIN_PASSWORD:
         await state.update_data(is_guest_admin=True)
 
-        await AppLogger.info(
-            event="admin.guest_login_success",
-            source=__name__,
-            message="Успешный вход в гостевой режим админки",
-            payload={
-                "user_id": message.from_user.id,
-            },
-            write_to_db=True,
+        logger.info(
+            "Успешный вход в гостевой режим админки. user_id=%s",
+            message.from_user.id,
         )
 
         await send_admin_main_menu(message, state, session)
@@ -370,16 +407,10 @@ async def admin_password_input_handler(
     is_password_valid = verify_password(raw_password, admin_password_row.admin)
 
     if not is_password_valid:
-        await AppLogger.warning(
-            event="admin.login_failed_invalid_password",
-            source=__name__,
-            message="Введён неверный пароль админки",
-            payload={
-                "user_id": message.from_user.id,
-            },
-            write_to_db=True,
+        logger.warning(
+            "Неверный пароль админки. user_id=%s",
+            message.from_user.id,
         )
-
         await message.answer("Неверный пароль. Возврат на стартовый экран.")
         await send_start_screen(message, state, session)
         return
@@ -392,17 +423,282 @@ async def admin_password_input_handler(
 
     await state.update_data(is_guest_admin=False)
 
-    await AppLogger.info(
-        event="admin.login_success",
-        source=__name__,
-        message="Успешный вход администратора",
-        payload={
-            "user_id": message.from_user.id,
-        },
-        write_to_db=True,
+    logger.info(
+        "Успешный вход администратора. user_id=%s",
+        message.from_user.id,
     )
 
     await send_admin_main_menu(message, state, session)
+
+
+@router.callback_query(F.data == "admin:tools_menu")
+async def admin_tools_menu_handler(
+    callback: CallbackQuery,
+    session: AsyncSession,
+) -> None:
+    """
+    Открывает раздел работы с промтами и играми.
+
+    Отвечает за:
+    - показ отдельного меню операций с играми и промтами.
+
+    Как работает:
+    - отправляет пользователю submenu с нужными действиями.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    await send_admin_tools_menu(callback.message, session)
+
+
+@router.callback_query(F.data == "admin:add_game")
+async def admin_add_game_start_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """
+    Запускает сценарий добавления новой игры.
+
+    Отвечает за:
+    - перевод пользователя в шаг ввода названия игры.
+
+    Как работает:
+    - устанавливает состояние waiting_new_game_name;
+    - просит пользователя ввести название новой игры.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    await state.set_state(AdminStates.waiting_new_game_name)
+    await callback.message.answer("Введите название новой игры:")
+
+
+@router.message(AdminStates.waiting_new_game_name)
+async def admin_add_game_name_handler(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает ввод названия новой игры.
+
+    Отвечает за:
+    - валидацию названия игры;
+    - создание записи в таблице games в обычном режиме;
+    - блокировку сохранения в гостевом режиме;
+    - создание базового приветствия игры в ui_texts;
+    - возврат в раздел работы с промтами и играми.
+
+    Как работает:
+    - если длина названия меньше 2 символов, не создаёт игру;
+    - в гостевом режиме ничего не сохраняет;
+    - в обычном режиме создаёт игру с автоматически вычисленным game_id;
+    - создаёт дефолтный текст приветствия для нового меню игры;
+    - затем возвращает пользователя в submenu.
+
+    Что принимает:
+    - message: входящее сообщение Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    game_name = (message.text or "").strip()
+    guest_mode = await is_guest_admin_session(state)
+
+    if len(game_name) < 2:
+        await message.answer("Название слишком короткое. Возвращаю в раздел.")
+        await send_admin_tools_menu(message, session)
+        return
+
+    if guest_mode:
+        logger.info(
+            "Гость попытался добавить игру. user_id=%s game_name=%s",
+            message.from_user.id if message.from_user else None,
+            game_name,
+        )
+        await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        await send_admin_tools_menu(message, session)
+        return
+
+    game_repo = GameRepository(session)
+    new_game = await game_repo.create(game_name)
+
+    ui_repo = UITextRepository(session)
+    await ui_repo.create_if_missing(
+        alias=f"{new_game.game_id}_greeting",
+        value=f"Основное приветствие {new_game.name}",
+        text_type="text",
+        description=f"Приветствие меню игры {new_game.name}",
+        game=new_game.game_id,
+        level=None,
+        order=None,
+        game_alias=None,
+    )
+
+    logger.info(
+        "Создана новая игра. game_id=%s name=%s user_id=%s",
+        new_game.game_id,
+        new_game.name,
+        message.from_user.id if message.from_user else None,
+    )
+
+    await message.answer(
+        f"Игра добавлена.\n"
+        f"name: {escape(new_game.name)}\n"
+        f"game_id: {escape(new_game.game_id)}"
+    )
+    await send_admin_tools_menu(message, session)
+
+
+@router.callback_query(F.data == "admin:add_prompt")
+async def admin_add_prompt_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Временная заглушка для добавления промта.
+
+    Отвечает за:
+    - показ пользователю, что сценарий будет реализован следующим шагом.
+
+    Как работает:
+    - отправляет временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Добавление промта будет реализовано следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:edit_prompts")
+async def admin_edit_prompts_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Временная заглушка для изменения промтов.
+
+    Отвечает за:
+    - показ пользователю, что сценарий будет реализован следующим шагом.
+
+    Как работает:
+    - отправляет временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Изменение промтов будет реализовано следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:toggle_prompt")
+async def admin_toggle_prompt_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Временная заглушка для активации и деактивации промтов.
+
+    Отвечает за:
+    - показ пользователю, что сценарий будет реализован следующим шагом.
+
+    Как работает:
+    - отправляет временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Активация и деактивация промтов будет реализована следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:delete_prompt")
+async def admin_delete_prompt_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Временная заглушка для удаления промта.
+
+    Отвечает за:
+    - показ пользователю, что сценарий будет реализован следующим шагом.
+
+    Как работает:
+    - отправляет временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Удаление промта будет реализовано следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:delete_game")
+async def admin_delete_game_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Временная заглушка для удаления игры.
+
+    Отвечает за:
+    - показ пользователю, что сценарий будет реализован следующим шагом.
+
+    Как работает:
+    - отправляет временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Удаление игры будет реализовано следующим шагом.")
 
 
 @router.callback_query(F.data == "admin:edit_start_greeting")
@@ -571,15 +867,9 @@ async def admin_new_start_greeting_handler(
 
     if len(new_text) >= 10:
         if guest_mode:
-            await AppLogger.info(
-                event="admin.guest_attempt_update_start_greeting",
-                source=__name__,
-                message="Гость попытался изменить стартовое приветствие",
-                payload={
-                    "user_id": message.from_user.id if message.from_user else None,
-                    "new_text": new_text,
-                },
-                write_to_db=True,
+            logger.info(
+                "Гость попытался изменить стартовое приветствие. user_id=%s",
+                message.from_user.id if message.from_user else None,
             )
             await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
         else:
@@ -626,15 +916,9 @@ async def admin_new_admin_greeting_handler(
 
     if len(new_text) >= 10:
         if guest_mode:
-            await AppLogger.info(
-                event="admin.guest_attempt_update_admin_greeting",
-                source=__name__,
-                message="Гость попытался изменить приветствие админки",
-                payload={
-                    "user_id": message.from_user.id if message.from_user else None,
-                    "new_text": new_text,
-                },
-                write_to_db=True,
+            logger.info(
+                "Гость попытался изменить приветствие админки. user_id=%s",
+                message.from_user.id if message.from_user else None,
             )
             await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
         else:
@@ -775,16 +1059,10 @@ async def admin_new_button_text_handler(
 
     if button_alias is not None and 2 <= len(new_text) <= 30:
         if guest_mode:
-            await AppLogger.info(
-                event="admin.guest_attempt_update_button_text",
-                source=__name__,
-                message="Гость попытался изменить текст кнопки",
-                payload={
-                    "user_id": message.from_user.id if message.from_user else None,
-                    "button_alias": button_alias,
-                    "new_text": new_text,
-                },
-                write_to_db=True,
+            logger.info(
+                "Гость попытался изменить текст кнопки. user_id=%s button_alias=%s",
+                message.from_user.id if message.from_user else None,
+                button_alias,
             )
             await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
         else:
@@ -970,14 +1248,9 @@ async def admin_new_password_confirm_handler(
         return
 
     if guest_mode:
-        await AppLogger.info(
-            event="admin.guest_attempt_change_password",
-            source=__name__,
-            message="Гость попытался изменить пароль администратора",
-            payload={
-                "user_id": message.from_user.id if message.from_user else None,
-            },
-            write_to_db=True,
+        logger.info(
+            "Гость попытался изменить пароль администратора. user_id=%s",
+            message.from_user.id if message.from_user else None,
         )
         await state.update_data(new_password=None)
         await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
@@ -990,14 +1263,9 @@ async def admin_new_password_confirm_handler(
         new_password_hash=hash_password(second_password),
     )
 
-    await AppLogger.info(
-        event="admin.password_changed",
-        source=__name__,
-        message="Пароль администратора изменён",
-        payload={
-            "user_id": message.from_user.id if message.from_user else None,
-        },
-        write_to_db=True,
+    logger.info(
+        "Пароль администратора изменён. user_id=%s",
+        message.from_user.id if message.from_user else None,
     )
 
     await state.update_data(new_password=None)
@@ -1015,7 +1283,7 @@ async def admin_back_to_main_handler(
     Возвращает пользователя в главное меню админки.
 
     Отвечает за:
-    - обработку нажатия кнопки "Отмена".
+    - обработку нажатия кнопки "Назад" или "Отмена".
 
     Как работает:
     - отправляет главное меню админки повторно.

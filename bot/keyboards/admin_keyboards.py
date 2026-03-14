@@ -5,6 +5,7 @@
 
 Отвечает за:
 - сборку inline-клавиатур административного меню;
+- сборку клавиатуры раздела работы с промтами и играми;
 - сборку клавиатур подтверждения;
 - сборку списка всех кнопок системы для редактирования.
 
@@ -62,8 +63,63 @@ def build_admin_main_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMar
         callback_data="admin:change_password",
     )
     builder.button(
+        text=button_texts["admin_button_prompt_games_work"],
+        callback_data="admin:tools_menu",
+    )
+    builder.button(
         text=button_texts["admin_button_exit"],
         callback_data="admin:exit",
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_admin_tools_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру раздела работы с промтами и играми.
+
+    Отвечает за:
+    - отображение действий над играми и промтами.
+
+    Как работает:
+    - получает словарь alias -> текст кнопки;
+    - создаёт inline-кнопки с фиксированными callback_data.
+
+    Что принимает:
+    - button_texts: словарь с текстами кнопок.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=button_texts["admin_button_tools_add_game"],
+        callback_data="admin:add_game",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_add_prompt"],
+        callback_data="admin:add_prompt",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_edit_prompts"],
+        callback_data="admin:edit_prompts",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_toggle_prompt"],
+        callback_data="admin:toggle_prompt",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_delete_prompt"],
+        callback_data="admin:delete_prompt",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_delete_game"],
+        callback_data="admin:delete_game",
+    )
+    builder.button(
+        text=button_texts["admin_button_tools_back"],
+        callback_data="admin:back_main",
     )
     builder.adjust(1)
     return builder.as_markup()
