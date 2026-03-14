@@ -18,6 +18,7 @@
 """
 
 from database.models.admin_login_incident import AdminLoginIncident
+from database.models.analytics_prompt import AnalyticsPrompt
 from database.models.app_log import AppLog
 from database.models.deleted_prompt import DeletedPrompt
 from database.models.dialog_message import DialogMessage
@@ -28,6 +29,7 @@ from database.models.ui_text import UIText
 
 __all__ = [
     "AdminLoginIncident",
+    "AnalyticsPrompt",
     "AppLog",
     "DeletedPrompt",
     "DialogMessage",

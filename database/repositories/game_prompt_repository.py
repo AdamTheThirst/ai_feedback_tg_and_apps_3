@@ -5,11 +5,11 @@
 
 Отвечает за:
 - получение промта по alias;
-- получение списка промтов по game_id;
+- получение списка промтов;
 - создание промта;
-- создание дефолтного промта, если он отсутствует;
-- обновление данных изображения;
-- удаление промтов игры.
+- обновление промта;
+- переключение активности промта;
+- удаление промтов.
 
 Как работает:
 - скрывает SQLAlchemy-запросы от обработчиков;
@@ -35,8 +35,9 @@ class GamePromptRepository:
     Отвечает за:
     - чтение промтов;
     - создание промтов;
-    - обновление изображения у промта;
-    - удаление промтов игры.
+    - обновление промтов;
+    - переключение активности;
+    - удаление промтов.
 
     Как работает:
     - работает поверх ORM SQLAlchemy;
@@ -77,6 +78,22 @@ class GamePromptRepository:
             select(GamePrompt).where(GamePrompt.alias == alias)
         )
         return result.scalar_one_or_none()
+
+    async def list_all(self) -> list[GamePrompt]:
+        """
+        Получает список всех промтов.
+
+        Что принимает:
+        - ничего.
+
+        Что возвращает:
+        - список объектов GamePrompt.
+        """
+
+        result = await self.session.execute(
+            select(GamePrompt).order_by(GamePrompt.id.asc())
+        )
+        return list(result.scalars().all())
 
     async def list_by_game_id(self, game_id: str) -> list[GamePrompt]:
         """
@@ -180,6 +197,44 @@ class GamePromptRepository:
         await self.session.refresh(item)
         return item
 
+    async def update_conditions(self, alias: str, new_conditions: str) -> None:
+        """
+        Обновляет условия промта.
+
+        Что принимает:
+        - alias: alias промта;
+        - new_conditions: новый текст условий.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        item = await self.get_by_alias(alias)
+        if item is None:
+            return
+
+        item.conditions = new_conditions
+        await self.session.commit()
+
+    async def update_prompt_text(self, alias: str, new_prompt_text: str) -> None:
+        """
+        Обновляет текст промта.
+
+        Что принимает:
+        - alias: alias промта;
+        - new_prompt_text: новый текст промта.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        item = await self.get_by_alias(alias)
+        if item is None:
+            return
+
+        item.prompt_text = new_prompt_text
+        await self.session.commit()
+
     async def update_image_data(
         self,
         alias: str,
@@ -204,6 +259,42 @@ class GamePromptRepository:
 
         item.img_path = img_path
         item.img_id = img_id
+        await self.session.commit()
+
+    async def toggle_is_active(self, alias: str) -> bool | None:
+        """
+        Переключает флаг активности промта.
+
+        Что принимает:
+        - alias: alias промта.
+
+        Что возвращает:
+        - новое значение is_active;
+        - None, если промт не найден.
+        """
+
+        item = await self.get_by_alias(alias)
+        if item is None:
+            return None
+
+        item.is_active = not item.is_active
+        await self.session.commit()
+        return item.is_active
+
+    async def delete_by_alias(self, alias: str) -> None:
+        """
+        Удаляет промт по alias.
+
+        Что принимает:
+        - alias: alias промта.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(GamePrompt).where(GamePrompt.alias == alias)
+        )
         await self.session.commit()
 
     async def delete_by_game_id(self, game_id: str) -> None:

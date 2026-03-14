@@ -6,8 +6,12 @@
 Отвечает за:
 - сборку inline-клавиатур административного меню;
 - сборку клавиатуры раздела работы с промтами и играми;
+- сборку клавиатуры раздела аналитики;
 - сборку клавиатуры списка игр;
+- сборку клавиатуры списка промтов;
+- сборку клавиатуры действий редактирования промта;
 - сборку клавиатур подтверждения;
+- сборку клавиатуры пропуска изображения;
 - сборку списка всех кнопок системы для редактирования.
 
 Как работает:
@@ -16,8 +20,7 @@
 
 Что принимает:
 - словари текстов кнопок;
-- список кнопок из базы;
-- список игр из базы.
+- списки сущностей из базы.
 
 Что возвращает:
 - готовые inline-клавиатуры.
@@ -61,6 +64,10 @@ def build_admin_main_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMar
     builder.button(
         text=button_texts["admin_button_prompt_games_work"],
         callback_data="admin:tools_menu",
+    )
+    builder.button(
+        text=button_texts["admin_button_analytics"],
+        callback_data="admin:analytics_menu",
     )
     builder.button(
         text=button_texts["admin_button_exit"],
@@ -114,16 +121,50 @@ def build_admin_tools_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMa
     return builder.as_markup()
 
 
-def build_games_list_keyboard(
+def build_admin_analytics_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру раздела аналитики.
+
+    Что принимает:
+    - button_texts: словарь с текстами кнопок.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=button_texts["admin_button_analytics_new"],
+        callback_data="admin:new_analytics",
+    )
+    builder.button(
+        text=button_texts["admin_button_analytics_edit"],
+        callback_data="admin:edit_analytics",
+    )
+    builder.button(
+        text=button_texts["admin_button_analytics_delete"],
+        callback_data="admin:delete_analytics",
+    )
+    builder.button(
+        text=button_texts["admin_button_analytics_back"],
+        callback_data="admin:back_main",
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_games_selection_keyboard(
     games: list[Game],
     cancel_text: str,
+    callback_prefix: str,
 ) -> InlineKeyboardMarkup:
     """
     Собирает клавиатуру списка игр.
 
     Что принимает:
     - games: список игр;
-    - cancel_text: текст кнопки возврата.
+    - cancel_text: текст кнопки возврата;
+    - callback_prefix: префикс callback_data.
 
     Что возвращает:
     - объект InlineKeyboardMarkup.
@@ -134,9 +175,94 @@ def build_games_list_keyboard(
     for game in games:
         builder.button(
             text=game.name,
-            callback_data=f"admin:delete_game_select:{game.game_id}",
+            callback_data=f"{callback_prefix}:{game.game_id}",
         )
 
+    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_prompt_selection_keyboard(
+    items: list[tuple[str, str]],
+    cancel_text: str,
+    callback_prefix: str,
+) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру списка промтов.
+
+    Что принимает:
+    - items: список кортежей (текст кнопки, ключ);
+    - cancel_text: текст кнопки возврата;
+    - callback_prefix: префикс callback_data.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+
+    for text, key in items:
+        builder.button(
+            text=text,
+            callback_data=f"{callback_prefix}:{key}",
+        )
+
+    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_prompt_edit_actions_keyboard(button_texts: dict[str, str]) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру действий редактирования промта.
+
+    Что принимает:
+    - button_texts: словарь с текстами кнопок.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=button_texts["admin_button_prompt_action_name"],
+        callback_data="admin:prompt_action_name",
+    )
+    builder.button(
+        text=button_texts["admin_button_prompt_action_conditions"],
+        callback_data="admin:prompt_action_conditions",
+    )
+    builder.button(
+        text=button_texts["admin_button_prompt_action_prompt"],
+        callback_data="admin:prompt_action_prompt",
+    )
+    builder.button(
+        text=button_texts["admin_button_prompt_action_image"],
+        callback_data="admin:prompt_action_image",
+    )
+    builder.button(
+        text=button_texts["common_cancel_button"],
+        callback_data="admin:tools_menu",
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def build_skip_image_keyboard(skip_text: str, cancel_text: str) -> InlineKeyboardMarkup:
+    """
+    Собирает клавиатуру пропуска загрузки изображения.
+
+    Что принимает:
+    - skip_text: текст кнопки пропуска;
+    - cancel_text: текст кнопки отмены.
+
+    Что возвращает:
+    - объект InlineKeyboardMarkup.
+    """
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text=skip_text, callback_data="admin:prompt_skip_image")
     builder.button(text=cancel_text, callback_data="admin:back_main")
     builder.adjust(1)
     return builder.as_markup()

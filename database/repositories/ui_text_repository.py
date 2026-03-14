@@ -10,7 +10,7 @@
 - создание записей по умолчанию;
 - мягкую дозапись новых служебных полей в старые записи;
 - обновление текста;
-- удаление игровых текстов и кнопок по game_id.
+- удаление игровых текстов и кнопок.
 
 Как работает:
 - скрывает SQLAlchemy-запросы от обработчиков;
@@ -141,6 +141,48 @@ class UITextRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
+    async def list_prompt_buttons(self) -> list[UIText]:
+        """
+        Получает все кнопки второго уровня, связанные с промтами.
+
+        Что принимает:
+        - ничего.
+
+        Что возвращает:
+        - список объектов UIText.
+        """
+
+        result = await self.session.execute(
+            select(UIText)
+            .where(
+                UIText.type == "button",
+                UIText.level == 1,
+                UIText.game_alias.is_not(None),
+            )
+            .order_by(UIText.game.asc(), UIText.order.asc(), UIText.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_prompt_button_by_game_alias(self, game_alias: str) -> UIText | None:
+        """
+        Получает кнопку второго уровня по game_alias промта.
+
+        Что принимает:
+        - game_alias: alias промта.
+
+        Что возвращает:
+        - объект UIText или None.
+        """
+
+        result = await self.session.execute(
+            select(UIText).where(
+                UIText.type == "button",
+                UIText.level == 1,
+                UIText.game_alias == game_alias,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_next_order(self, game: str, level: int) -> int:
         """
         Возвращает следующий порядковый номер для игровой кнопки.
@@ -270,5 +312,21 @@ class UITextRepository:
 
         await self.session.execute(
             delete(UIText).where(UIText.game == game_id)
+        )
+        await self.session.commit()
+
+    async def delete_by_game_alias(self, game_alias: str) -> None:
+        """
+        Удаляет тексты и кнопки, связанные с конкретным промтом.
+
+        Что принимает:
+        - game_alias: alias промта.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(UIText).where(UIText.game_alias == game_alias)
         )
         await self.session.commit()

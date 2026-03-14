@@ -6,12 +6,12 @@
 Отвечает за:
 - сохранение сообщений диалога;
 - получение последних сообщений диалога для контекста ИИ;
-- удаление сообщений по игре.
+- удаление сообщений по игре и промту.
 
 Как работает:
 - добавляет новые строки в таблицу dialog_messages;
 - выбирает последние сообщения по dialog_id;
-- удаляет сообщения по game_id.
+- удаляет сообщения по game_id или subgame_id.
 
 Что принимает:
 - активную AsyncSession.
@@ -33,7 +33,8 @@ class DialogMessageRepository:
     Отвечает за:
     - запись реплик диалога;
     - чтение последних реплик диалога;
-    - удаление сообщений игры.
+    - удаление сообщений игры;
+    - удаление сообщений конкретного промта.
 
     Как работает:
     - использует ORM SQLAlchemy;
@@ -135,5 +136,21 @@ class DialogMessageRepository:
 
         await self.session.execute(
             delete(DialogMessage).where(DialogMessage.game_id == game_id)
+        )
+        await self.session.commit()
+
+    async def delete_by_subgame_id(self, subgame_id: str) -> None:
+        """
+        Удаляет все сообщения конкретного промта по subgame_id.
+
+        Что принимает:
+        - subgame_id: alias промта.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(DialogMessage).where(DialogMessage.subgame_id == subgame_id)
         )
         await self.session.commit()

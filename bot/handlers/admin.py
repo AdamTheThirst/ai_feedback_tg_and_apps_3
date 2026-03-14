@@ -10,6 +10,7 @@
 - фиксацию инцидентов несанкционированного входа;
 - показ главного меню админки;
 - показ раздела работы с промтами и играми;
+- показ раздела аналитики;
 - редактирование приветствия стартового экрана;
 - редактирование приветствия админки;
 - редактирование текстов кнопок;
@@ -45,11 +46,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.handlers.start import send_start_screen
 from bot.keyboards.admin_keyboards import (
+    build_admin_analytics_keyboard,
     build_admin_main_keyboard,
     build_admin_tools_keyboard,
     build_buttons_list_keyboard,
     build_confirm_keyboard,
-    build_games_list_keyboard,
+    build_games_selection_keyboard,
 )
 from bot.states.admin import AdminStates
 from database.repositories.admin_login_incident_repository import (
@@ -62,7 +64,6 @@ from database.repositories.game_repository import GameRepository
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
 from services.security import hash_password, verify_password
-
 
 router = Router(name="admin-router")
 logger = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ async def send_admin_main_menu(
         "admin_button_edit_buttons",
         "admin_button_change_password",
         "admin_button_prompt_games_work",
+        "admin_button_analytics",
         "admin_button_exit",
     ]
     texts = await ui_repo.get_many_by_aliases(aliases)
@@ -133,6 +135,7 @@ async def send_admin_main_menu(
             "admin_button_edit_buttons": texts["admin_button_edit_buttons"].value,
             "admin_button_change_password": texts["admin_button_change_password"].value,
             "admin_button_prompt_games_work": texts["admin_button_prompt_games_work"].value,
+            "admin_button_analytics": texts["admin_button_analytics"].value,
             "admin_button_exit": texts["admin_button_exit"].value,
         }
     )
@@ -180,6 +183,46 @@ async def send_admin_tools_menu(
     )
 
     await message.answer("Работа с промтами и играми", reply_markup=keyboard)
+
+
+async def send_admin_analytics_menu(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Отправляет пользователю раздел аналитики.
+
+    Что принимает:
+    - message: сообщение, через которое отправляется ответ;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await state.set_state(AdminStates.analytics_menu)
+
+    ui_repo = UITextRepository(session)
+    aliases = [
+        "admin_button_analytics_new",
+        "admin_button_analytics_edit",
+        "admin_button_analytics_delete",
+        "admin_button_analytics_back",
+    ]
+    texts = await ui_repo.get_many_by_aliases(aliases)
+
+    keyboard = build_admin_analytics_keyboard(
+        {
+            "admin_button_analytics_new": texts["admin_button_analytics_new"].value,
+            "admin_button_analytics_edit": texts["admin_button_analytics_edit"].value,
+            "admin_button_analytics_delete": texts["admin_button_analytics_delete"].value,
+            "admin_button_analytics_back": texts["admin_button_analytics_back"].value,
+        }
+    )
+
+    await message.answer("Анализ", reply_markup=keyboard)
 
 
 async def send_text_preview_screen(
@@ -239,7 +282,6 @@ async def register_unauthorized_admin_attempt(
         return
 
     incident_repo = AdminLoginIncidentRepository(session)
-
     device = None
 
     await incident_repo.create_incident(
@@ -385,6 +427,97 @@ async def admin_tools_menu_handler(
     await send_admin_tools_menu(callback.message, session)
 
 
+@router.callback_query(F.data == "admin:analytics_menu")
+async def admin_analytics_menu_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Открывает раздел аналитики.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    await send_admin_analytics_menu(callback.message, state, session)
+
+
+@router.callback_query(F.data == "admin:new_analytics")
+async def admin_new_analytics_handler(callback: CallbackQuery) -> None:
+    """
+    Обрабатывает нажатие на кнопку "Новая аналитика".
+
+    Пока это только заглушка для следующего этапа.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Раздел «Новая аналитика» будет реализован следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:edit_analytics")
+async def admin_edit_analytics_handler(callback: CallbackQuery) -> None:
+    """
+    Обрабатывает нажатие на кнопку "Изменить аналитику".
+
+    Пока это только заглушка для следующего этапа.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Раздел «Изменить аналитику» будет реализован следующим шагом.")
+
+
+@router.callback_query(F.data == "admin:delete_analytics")
+async def admin_delete_analytics_handler(callback: CallbackQuery) -> None:
+    """
+    Обрабатывает нажатие на кнопку "Удалить аналитику".
+
+    Пока это только заглушка для следующего этапа.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Раздел «Удалить аналитику» будет реализован следующим шагом.")
+
+
 @router.callback_query(F.data == "admin:add_game")
 async def admin_add_game_start_handler(
     callback: CallbackQuery,
@@ -505,235 +638,16 @@ async def admin_delete_game_start_handler(
     ui_repo = UITextRepository(session)
     common_texts = await ui_repo.get_many_by_aliases(["common_cancel_button"])
 
-    keyboard = build_games_list_keyboard(
+    keyboard = build_games_selection_keyboard(
         games=games,
         cancel_text=common_texts["common_cancel_button"].value,
+        callback_prefix="admin:delete_game_select",
     )
 
     await callback.message.answer(
         "Выберите игру, которую хотите удалить:",
         reply_markup=keyboard,
     )
-
-
-@router.callback_query(F.data.startswith("admin:delete_game_select:"))
-async def admin_delete_game_select_handler(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Обрабатывает выбор игры для удаления.
-
-    Что принимает:
-    - callback: callback-запрос Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    game_id = callback.data.split("admin:delete_game_select:", maxsplit=1)[1]
-
-    game_repo = GameRepository(session)
-    game = await game_repo.get_by_game_id(game_id)
-
-    if game is None:
-        await callback.message.answer("Игра не найдена.")
-        await send_admin_main_menu(callback.message, state, session)
-        return
-
-    ui_repo = UITextRepository(session)
-    common_texts = await ui_repo.get_many_by_aliases(
-        ["common_cancel_button"]
-    )
-
-    keyboard = build_confirm_keyboard(
-        edit_text="Удалить",
-        cancel_text=common_texts["common_cancel_button"].value,
-        edit_callback="admin:confirm_delete_game",
-    )
-
-    await state.update_data(delete_game_id=game.game_id, delete_game_name=game.name)
-    await state.set_state(AdminStates.waiting_delete_game_confirm)
-
-    await callback.message.answer(
-        f"Вы точно хотите удалить игру {escape(game.name)}?",
-        reply_markup=keyboard,
-    )
-
-
-@router.callback_query(F.data == "admin:confirm_delete_game")
-async def admin_confirm_delete_game_handler(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Подтверждает и выполняет удаление игры.
-
-    Отвечает за:
-    - перенос связанных промтов в deleted_prompts;
-    - удаление связанных промтов;
-    - удаление связанных UI-текстов игры;
-    - удаление связанных сообщений диалогов;
-    - удаление самой игры;
-    - блокировку сохранения в гостевом режиме.
-
-    Что принимает:
-    - callback: callback-запрос Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    data = await state.get_data()
-    game_id = data.get("delete_game_id")
-    game_name = data.get("delete_game_name")
-    guest_mode = await is_guest_admin_session(state)
-
-    await state.update_data(delete_game_id=None, delete_game_name=None)
-
-    if not game_id or not game_name:
-        await callback.message.answer("Данные для удаления игры не найдены.")
-        await send_admin_main_menu(callback.message, state, session)
-        return
-
-    if guest_mode:
-        logger.info(
-            "Гость попытался удалить игру. user_id=%s game_id=%s",
-            callback.from_user.id if callback.from_user else None,
-            game_id,
-        )
-        await callback.message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
-        await send_admin_main_menu(callback.message, state, session)
-        return
-
-    game_repo = GameRepository(session)
-    prompt_repo = GamePromptRepository(session)
-    ui_repo = UITextRepository(session)
-    dialog_repo = DialogMessageRepository(session)
-    deleted_prompt_repo = DeletedPromptRepository(session)
-
-    game = await game_repo.get_by_game_id(game_id)
-    if game is None:
-        await callback.message.answer("Игра уже удалена или не найдена.")
-        await send_admin_main_menu(callback.message, state, session)
-        return
-
-    prompts = await prompt_repo.list_by_game_id(game_id)
-
-    for prompt in prompts:
-        await deleted_prompt_repo.create(
-            game_name=game.name,
-            promt=prompt.prompt_text,
-        )
-
-    await prompt_repo.delete_by_game_id(game_id)
-    await ui_repo.delete_by_game_id(game_id)
-    await dialog_repo.delete_by_game_id(game_id)
-    await game_repo.delete_by_game_id(game_id)
-
-    logger.info(
-        "Игра удалена. game_id=%s game_name=%s user_id=%s",
-        game.game_id,
-        game.name,
-        callback.from_user.id if callback.from_user else None,
-    )
-
-    await callback.message.answer(f"Игра {escape(game.name)} удалена.")
-    await send_admin_main_menu(callback.message, state, session)
-
-
-@router.callback_query(F.data == "admin:add_prompt")
-async def admin_add_prompt_stub_handler(callback: CallbackQuery) -> None:
-    """
-    Временная заглушка для добавления промта.
-
-    Что принимает:
-    - callback: callback-запрос Telegram.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Добавление промта будет реализовано следующим шагом.")
-
-
-@router.callback_query(F.data == "admin:edit_prompts")
-async def admin_edit_prompts_stub_handler(callback: CallbackQuery) -> None:
-    """
-    Временная заглушка для изменения промтов.
-
-    Что принимает:
-    - callback: callback-запрос Telegram.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Изменение промтов будет реализовано следующим шагом.")
-
-
-@router.callback_query(F.data == "admin:toggle_prompt")
-async def admin_toggle_prompt_stub_handler(callback: CallbackQuery) -> None:
-    """
-    Временная заглушка для активации и деактивации промтов.
-
-    Что принимает:
-    - callback: callback-запрос Telegram.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Активация и деактивация промтов будет реализована следующим шагом.")
-
-
-@router.callback_query(F.data == "admin:delete_prompt")
-async def admin_delete_prompt_stub_handler(callback: CallbackQuery) -> None:
-    """
-    Временная заглушка для удаления промта.
-
-    Что принимает:
-    - callback: callback-запрос Telegram.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("Удаление промта будет реализовано следующим шагом.")
 
 
 @router.callback_query(F.data == "admin:edit_start_greeting")
@@ -951,85 +865,6 @@ async def admin_edit_buttons_list_handler(
     )
 
 
-@router.callback_query(F.data.startswith("admin:button_select:"))
-async def admin_button_select_handler(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Обрабатывает выбор кнопки для редактирования.
-
-    Что принимает:
-    - callback: callback-запрос Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    await callback.answer()
-    if callback.message is None:
-        return
-
-    selected_alias = callback.data.split("admin:button_select:", maxsplit=1)[1]
-
-    ui_repo = UITextRepository(session)
-    selected_button = await ui_repo.get_by_alias(selected_alias)
-    current_value = selected_button.value if selected_button is not None else "Не найдено"
-
-    await state.update_data(target_button_alias=selected_alias)
-    await state.set_state(AdminStates.waiting_new_button_text)
-
-    await callback.message.answer(
-        f"Текущий текст кнопки:\n{escape(current_value)}\n\n"
-        "Введите новый текст, от 2 до 30 символов"
-    )
-
-
-@router.message(AdminStates.waiting_new_button_text)
-async def admin_new_button_text_handler(
-    message: Message,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Обрабатывает новый текст выбранной кнопки.
-
-    Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    new_text = (message.text or "").strip()
-    data = await state.get_data()
-    button_alias = data.get("target_button_alias")
-    guest_mode = await is_guest_admin_session(state)
-
-    if button_alias is not None and 2 <= len(new_text) <= 30:
-        if guest_mode:
-            logger.info(
-                "Гость попытался изменить текст кнопки. user_id=%s button_alias=%s",
-                message.from_user.id if message.from_user else None,
-                button_alias,
-            )
-            await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
-        else:
-            ui_repo = UITextRepository(session)
-            await ui_repo.update_value(button_alias, new_text)
-            await message.answer("Текст кнопки обновлён.")
-    else:
-        await message.answer("Некорректная длина текста. Возвращаю в админку.")
-
-    await state.update_data(target_button_alias=None)
-    await send_admin_main_menu(message, state, session)
-
-
 @router.callback_query(F.data == "admin:change_password")
 async def admin_change_password_start_handler(
     callback: CallbackQuery,
@@ -1052,137 +887,6 @@ async def admin_change_password_start_handler(
 
     await state.set_state(AdminStates.waiting_current_password)
     await callback.message.answer("Изменение пароля\n\nВведите текущий пароль:")
-
-
-@router.message(AdminStates.waiting_current_password)
-async def admin_current_password_handler(
-    message: Message,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Обрабатывает ввод текущего пароля при смене пароля.
-
-    Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.")
-        return
-
-    guest_mode = await is_guest_admin_session(state)
-    if guest_mode:
-        await state.set_state(AdminStates.waiting_new_password)
-        await message.answer("Введите новый пароль:")
-        return
-
-    raw_password = (message.text or "").strip()
-    password_repo = PasswordRepository(session)
-    admin_password_row = await password_repo.get_by_user_id(ADMIN_USER_ID)
-
-    if admin_password_row is None:
-        await message.answer("Пароль администратора не найден.")
-        await send_start_screen(message, state, session)
-        return
-
-    is_password_valid = verify_password(raw_password, admin_password_row.admin)
-
-    if not is_password_valid:
-        await message.answer("Текущий пароль неверный. Возврат на стартовый экран.")
-        await send_start_screen(message, state, session)
-        return
-
-    if message.from_user.id != ADMIN_USER_ID:
-        await register_unauthorized_admin_attempt(message, session)
-        await message.answer("Доступ запрещён. Попытка зафиксирована.")
-        await send_start_screen(message, state, session)
-        return
-
-    await state.set_state(AdminStates.waiting_new_password)
-    await message.answer("Введите новый пароль:")
-
-
-@router.message(AdminStates.waiting_new_password)
-async def admin_new_password_handler(
-    message: Message,
-    state: FSMContext,
-) -> None:
-    """
-    Обрабатывает ввод нового пароля.
-
-    Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    new_password = (message.text or "").strip()
-    await state.update_data(new_password=new_password)
-    await state.set_state(AdminStates.waiting_new_password_confirm)
-    await message.answer("Повторно введите новый пароль:")
-
-
-@router.message(AdminStates.waiting_new_password_confirm)
-async def admin_new_password_confirm_handler(
-    message: Message,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    """
-    Обрабатывает подтверждение нового пароля.
-
-    Что принимает:
-    - message: входящее сообщение Telegram;
-    - state: объект FSMContext;
-    - session: активная сессия базы данных.
-
-    Что возвращает:
-    - ничего.
-    """
-
-    data = await state.get_data()
-    first_password = data.get("new_password", "")
-    second_password = (message.text or "").strip()
-    guest_mode = await is_guest_admin_session(state)
-
-    if not first_password or first_password != second_password:
-        await message.answer("Пароли не совпали. Возвращаю в админку.")
-        await state.update_data(new_password=None)
-        await send_admin_main_menu(message, state, session)
-        return
-
-    if guest_mode:
-        logger.info(
-            "Гость попытался изменить пароль администратора. user_id=%s",
-            message.from_user.id if message.from_user else None,
-        )
-        await state.update_data(new_password=None)
-        await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
-        await send_admin_main_menu(message, state, session)
-        return
-
-    password_repo = PasswordRepository(session)
-    await password_repo.update_password_hash(
-        user_id=ADMIN_USER_ID,
-        new_password_hash=hash_password(second_password),
-    )
-
-    logger.info(
-        "Пароль администратора изменён. user_id=%s",
-        message.from_user.id if message.from_user else None,
-    )
-
-    await state.update_data(new_password=None)
-    await message.answer("Пароль успешно изменён.")
-    await send_admin_main_menu(message, state, session)
 
 
 @router.callback_query(F.data == "admin:back_main")
@@ -1208,12 +912,6 @@ async def admin_back_to_main_handler(
         return
 
     await state.set_state(AdminStates.main_menu)
-    await state.update_data(
-        delete_game_id=None,
-        delete_game_name=None,
-        target_button_alias=None,
-        new_password=None,
-    )
     await send_admin_main_menu(callback.message, state, session)
 
 
