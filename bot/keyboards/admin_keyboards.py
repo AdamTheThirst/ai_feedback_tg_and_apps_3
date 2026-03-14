@@ -190,14 +190,16 @@ def build_prompt_selection_keyboard(
     items: list[tuple[str, str]],
     cancel_text: str,
     callback_prefix: str,
+    cancel_callback: str = "admin:back_main",
 ) -> InlineKeyboardMarkup:
     """
-    Собирает клавиатуру списка промтов.
+    Собирает клавиатуру списка промтов или аналитик.
 
     Что принимает:
     - items: список кортежей (текст кнопки, ключ);
     - cancel_text: текст кнопки возврата;
-    - callback_prefix: префикс callback_data.
+    - callback_prefix: префикс callback_data;
+    - cancel_callback: callback_data кнопки отмены.
 
     Что возвращает:
     - объект InlineKeyboardMarkup.
@@ -211,7 +213,7 @@ def build_prompt_selection_keyboard(
             callback_data=f"{callback_prefix}:{key}",
         )
 
-    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.button(text=cancel_text, callback_data=cancel_callback)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -275,6 +277,7 @@ def build_confirm_keyboard(
     edit_text: str,
     cancel_text: str,
     edit_callback: str,
+    cancel_callback: str = "admin:back_main",
 ) -> InlineKeyboardMarkup:
     """
     Собирает клавиатуру подтверждения действия.
@@ -282,7 +285,8 @@ def build_confirm_keyboard(
     Что принимает:
     - edit_text: текст кнопки подтверждения;
     - cancel_text: текст кнопки отмены;
-    - edit_callback: callback_data для кнопки подтверждения.
+    - edit_callback: callback_data для кнопки подтверждения;
+    - cancel_callback: callback_data для кнопки отмены.
 
     Что возвращает:
     - объект InlineKeyboardMarkup.
@@ -290,7 +294,7 @@ def build_confirm_keyboard(
 
     builder = InlineKeyboardBuilder()
     builder.button(text=edit_text, callback_data=edit_callback)
-    builder.button(text=cancel_text, callback_data="admin:back_main")
+    builder.button(text=cancel_text, callback_data=cancel_callback)
     builder.adjust(2)
     return builder.as_markup()
 

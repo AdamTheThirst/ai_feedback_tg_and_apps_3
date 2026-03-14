@@ -5,6 +5,7 @@
 
 Отвечает за:
 - генерацию header, comment и alias для нового аналитического промта;
+- генерацию header и comment для изменения существующего аналитического промта;
 - нормализацию и безопасный разбор ответа ИИ.
 
 Как работает:
@@ -31,7 +32,7 @@ from services.ai_client import get_ai_client
 
 logger = logging.getLogger(__name__)
 
-ANALYTICS_METADATA_SYSTEM_PROMPT = """
+NEW_ANALYTICS_METADATA_SYSTEM_PROMPT = """
 Ты анализируешь текст аналитического промта и возвращаешь ТОЛЬКО JSON без пояснений.
 
 Твоя задача:
@@ -45,6 +46,21 @@ ANALYTICS_METADATA_SYSTEM_PROMPT = """
   "header": "....",
   "comment": "....",
   "alias": "...."
+}
+""".strip()
+
+EDIT_ANALYTICS_METADATA_SYSTEM_PROMPT = """
+Ты анализируешь текст аналитического промта и возвращаешь ТОЛЬКО JSON без пояснений.
+
+Твоя задача:
+1) comment — короткий комментарий на русском, строго до 100 символов.
+   Он должен максимально чётко объяснять, что делает этот аналитический промт.
+2) header — очень короткий заголовок на русском, 1 или 2 слова.
+
+Верни ТОЛЬКО JSON формата:
+{
+  "header": "....",
+  "comment": "...."
 }
 """.strip()
 
@@ -71,6 +87,27 @@ class AnalyticsMetadata:
     header: str
     comment: str
     alias: str
+
+
+@dataclass(slots=True)
+class AnalyticsEditMetadata:
+    """
+    Структура метаданных для изменения аналитического промта.
+
+    Отвечает за:
+    - хранение короткого заголовка;
+    - хранение комментария.
+
+    Что принимает:
+    - header: короткий заголовок;
+    - comment: краткий комментарий.
+
+    Что возвращает:
+    - объект AnalyticsEditMetadata.
+    """
+
+    header: str
+    comment: str
 
 
 def _normalize_message_content(raw_content) -> str:
@@ -195,9 +232,9 @@ def _fallback_comment() -> str:
     return "Анализирует диалог по заданному критерию."
 
 
-def _request_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
+def _request_new_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
     """
-    Выполняет синхронный запрос к ИИ для генерации метаданных аналитического промта.
+    Выполняет синхронный запрос к ИИ для генерации метаданных нового аналитического промта.
 
     Что принимает:
     - prompt_text: текст аналитического промта.
@@ -211,7 +248,7 @@ def _request_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
     response = client.chat.completions.create(
         model=settings.ai_model,
         messages=[
-            {"role": "system", "content": ANALYTICS_METADATA_SYSTEM_PROMPT},
+            {"role": "system", "content": NEW_ANALYTICS_METADATA_SYSTEM_PROMPT},
             {"role": "user", "content": prompt_text},
         ],
         max_tokens=200,
@@ -250,9 +287,60 @@ def _request_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
     )
 
 
+def _request_edit_analytics_metadata(prompt_text: str) -> AnalyticsEditMetadata:
+    """
+    Выполняет синхронный запрос к ИИ для генерации метаданных при изменении аналитического промта.
+
+    Что принимает:
+    - prompt_text: новый текст аналитического промта.
+
+    Что возвращает:
+    - объект AnalyticsEditMetadata.
+    """
+
+    client = get_ai_client()
+
+    response = client.chat.completions.create(
+        model=settings.ai_model,
+        messages=[
+            {"role": "system", "content": EDIT_ANALYTICS_METADATA_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt_text},
+        ],
+        max_tokens=150,
+        temperature=0.1,
+        top_p=0.8,
+    )
+
+    if not response.choices:
+        return AnalyticsEditMetadata(
+            header=_fallback_header_from_prompt(prompt_text),
+            comment=_fallback_comment(),
+        )
+
+    raw_content = getattr(response.choices[0].message, "content", None)
+    content_text = _normalize_message_content(raw_content)
+
+    try:
+        data = _extract_json_object(content_text)
+    except Exception as error:  # noqa: BLE001
+        logger.exception("Не удалось разобрать JSON обновления аналитики: %s", error)
+        return AnalyticsEditMetadata(
+            header=_fallback_header_from_prompt(prompt_text),
+            comment=_fallback_comment(),
+        )
+
+    header = str(data.get("header", "")).strip() or _fallback_header_from_prompt(prompt_text)
+    comment = str(data.get("comment", "")).strip() or _fallback_comment()
+
+    return AnalyticsEditMetadata(
+        header=header[:120],
+        comment=comment[:100],
+    )
+
+
 async def generate_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
     """
-    Асинхронно получает метаданные аналитического промта.
+    Асинхронно получает метаданные нового аналитического промта.
 
     Что принимает:
     - prompt_text: текст аналитического промта.
@@ -261,4 +349,18 @@ async def generate_analytics_metadata(prompt_text: str) -> AnalyticsMetadata:
     - объект AnalyticsMetadata.
     """
 
-    return await asyncio.to_thread(_request_analytics_metadata, prompt_text)
+    return await asyncio.to_thread(_request_new_analytics_metadata, prompt_text)
+
+
+async def generate_edited_analytics_metadata(prompt_text: str) -> AnalyticsEditMetadata:
+    """
+    Асинхронно получает метаданные для изменения аналитического промта.
+
+    Что принимает:
+    - prompt_text: новый текст аналитического промта.
+
+    Что возвращает:
+    - объект AnalyticsEditMetadata.
+    """
+
+    return await asyncio.to_thread(_request_edit_analytics_metadata, prompt_text)

@@ -17,6 +17,8 @@
 - смену пароля администратора;
 - добавление новой игры;
 - добавление нового аналитического промта;
+- изменение аналитического промта;
+- удаление аналитического промта;
 - удаление игры;
 - выход из админки.
 
@@ -56,6 +58,7 @@ from bot.keyboards.admin_keyboards import (
     build_confirm_keyboard,
     build_games_selection_keyboard,
     build_post_create_analytics_keyboard,
+    build_prompt_selection_keyboard,
 )
 from bot.states.admin import AdminStates
 from database.repositories.admin_login_incident_repository import (
@@ -68,7 +71,10 @@ from database.repositories.game_prompt_repository import GamePromptRepository
 from database.repositories.game_repository import GameRepository
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
-from services.analytics_ai import generate_analytics_metadata
+from services.analytics_ai import (
+    generate_analytics_metadata,
+    generate_edited_analytics_metadata,
+)
 from services.security import hash_password, verify_password
 
 router = Router(name="admin-router")
@@ -352,6 +358,67 @@ async def generate_unique_analytics_alias(
     return alias
 
 
+async def build_analytics_items(
+    session: AsyncSession,
+) -> list[tuple[str, str]]:
+    """
+    Собирает список аналитических промтов для вывода в кнопках.
+
+    Что принимает:
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - список кортежей в формате (текст_кнопки, alias).
+    """
+
+    repo = AnalyticsPromptRepository(session)
+    analytics_rows = await repo.list_all()
+
+    items: list[tuple[str, str]] = []
+
+    for item in analytics_rows:
+        button_text = f"{item.comment} | {item.header}"
+        items.append((button_text, item.alias))
+
+    return items
+
+
+async def send_analytics_selection_menu(
+    message: Message,
+    session: AsyncSession,
+    callback_prefix: str,
+) -> None:
+    """
+    Отправляет пользователю список аналитических промтов.
+
+    Что принимает:
+    - message: сообщение, через которое отправляется ответ;
+    - session: активная сессия базы данных;
+    - callback_prefix: префикс callback_data.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    items = await build_analytics_items(session)
+
+    if not items:
+        await message.answer("Список аналитики пуст.")
+        return
+
+    ui_repo = UITextRepository(session)
+    common_texts = await ui_repo.get_many_by_aliases(["common_cancel_button"])
+
+    keyboard = build_prompt_selection_keyboard(
+        items=items,
+        cancel_text=common_texts["common_cancel_button"].value,
+        callback_prefix=callback_prefix,
+        cancel_callback="admin:analytics_menu",
+    )
+
+    await message.answer("Выберите аналитический промт:", reply_markup=keyboard)
+
+
 async def finalize_new_analytics_creation(
     target_message: Message,
     state: FSMContext,
@@ -434,6 +501,67 @@ async def finalize_new_analytics_creation(
         f"Alias: {escape(unique_alias)}",
         reply_markup=keyboard,
     )
+
+
+async def finalize_edit_analytics(
+    target_message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Завершает сценарий изменения аналитического промта.
+
+    Что принимает:
+    - target_message: сообщение, через которое отправляется ответ;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    data = await state.get_data()
+    guest_mode = await is_guest_admin_session(state)
+
+    analytics_alias = data.get("edit_analytics_alias")
+    new_prompt_text = data.get("edit_analytics_prompt_text")
+
+    if not analytics_alias or not new_prompt_text:
+        await target_message.answer("Не удалось собрать данные для изменения аналитики.")
+        await send_admin_analytics_menu(target_message, state, session)
+        return
+
+    row = await AnalyticsPromptRepository(session).get_by_alias(analytics_alias)
+
+    if row is None:
+        await target_message.answer("Аналитический промт не найден.")
+        await send_admin_analytics_menu(target_message, state, session)
+        return
+
+    wait_message = await target_message.answer("Подготовка и запись")
+
+    if guest_mode:
+        with suppress(Exception):
+            await wait_message.delete()
+
+        await target_message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        await send_admin_analytics_menu(target_message, state, session)
+        return
+
+    metadata = await generate_edited_analytics_metadata(new_prompt_text)
+
+    await AnalyticsPromptRepository(session).update_prompt(
+        alias=analytics_alias,
+        header=metadata.header,
+        comment=metadata.comment,
+        promt=new_prompt_text,
+    )
+
+    with suppress(Exception):
+        await wait_message.delete()
+
+    await target_message.answer("Аналитический промт обновлён.")
+    await send_admin_analytics_menu(target_message, state, session)
 
 
 @router.message(Command("admin"))
@@ -747,9 +875,7 @@ async def admin_edit_analytics_handler(
     session: AsyncSession,
 ) -> None:
     """
-    Обрабатывает нажатие на кнопку "Изменить аналитику".
-
-    Пока это заготовка для следующего шага.
+    Запускает сценарий изменения аналитики.
 
     Что принимает:
     - callback: callback-запрос Telegram;
@@ -764,11 +890,79 @@ async def admin_edit_analytics_handler(
     if callback.message is None:
         return
 
-    await state.set_state(AdminStates.analytics_menu)
+    await state.set_state(AdminStates.waiting_edit_analytics_select)
+    await send_analytics_selection_menu(
+        message=callback.message,
+        session=session,
+        callback_prefix="admin:edit_analytics_select",
+    )
 
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("ЭТО ЗАГЛУШКА. Изменение аналитики сделаем следующим шагом.")
-    await send_admin_analytics_menu(callback.message, state, session)
+
+@router.callback_query(F.data.startswith("admin:edit_analytics_select:"))
+async def admin_edit_analytics_select_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает выбор аналитического промта для изменения.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    analytics_alias = callback.data.split("admin:edit_analytics_select:", maxsplit=1)[1]
+    row = await AnalyticsPromptRepository(session).get_by_alias(analytics_alias)
+
+    if row is None:
+        await callback.message.answer("Аналитический промт не найден.")
+        await send_admin_analytics_menu(callback.message, state, session)
+        return
+
+    await state.update_data(edit_analytics_alias=row.alias)
+    await state.set_state(AdminStates.waiting_edit_analytics_prompt)
+
+    await callback.message.answer(
+        f"Вы выбрали:\n{escape(row.comment)} | {escape(row.header)}\n\n"
+        "Введите новый текст аналитического промта:"
+    )
+
+
+@router.message(AdminStates.waiting_edit_analytics_prompt)
+async def admin_edit_analytics_prompt_handler(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает новый текст для изменения аналитического промта.
+
+    Что принимает:
+    - message: входящее сообщение Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    prompt_text = (message.text or "").strip()
+
+    if len(prompt_text) < 10:
+        await message.answer("Промт слишком короткий.")
+        return
+
+    await state.update_data(edit_analytics_prompt_text=prompt_text)
+    await finalize_edit_analytics(message, state, session)
 
 
 @router.callback_query(F.data == "admin:delete_analytics")
@@ -778,9 +972,7 @@ async def admin_delete_analytics_handler(
     session: AsyncSession,
 ) -> None:
     """
-    Обрабатывает нажатие на кнопку "Удалить аналитику".
-
-    Пока это заготовка для следующего шага.
+    Запускает сценарий удаления аналитики.
 
     Что принимает:
     - callback: callback-запрос Telegram;
@@ -795,10 +987,117 @@ async def admin_delete_analytics_handler(
     if callback.message is None:
         return
 
-    await state.set_state(AdminStates.analytics_menu)
+    await state.set_state(AdminStates.waiting_delete_analytics_select)
+    await send_analytics_selection_menu(
+        message=callback.message,
+        session=session,
+        callback_prefix="admin:delete_analytics_select",
+    )
 
-    # ЭТО ЗАГЛУШКА
-    await callback.message.answer("ЭТО ЗАГЛУШКА. Удаление аналитики сделаем следующим шагом.")
+
+@router.callback_query(F.data.startswith("admin:delete_analytics_select:"))
+async def admin_delete_analytics_select_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает выбор аналитического промта для удаления.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    analytics_alias = callback.data.split("admin:delete_analytics_select:", maxsplit=1)[1]
+    row = await AnalyticsPromptRepository(session).get_by_alias(analytics_alias)
+
+    if row is None:
+        await callback.message.answer("Аналитический промт не найден.")
+        await send_admin_analytics_menu(callback.message, state, session)
+        return
+
+    ui_repo = UITextRepository(session)
+    common_texts = await ui_repo.get_many_by_aliases(
+        ["common_delete_button", "admin_button_analytics_back"]
+    )
+
+    keyboard = build_confirm_keyboard(
+        edit_text=common_texts["common_delete_button"].value,
+        cancel_text=common_texts["admin_button_analytics_back"].value,
+        edit_callback="admin:confirm_delete_analytics",
+        cancel_callback="admin:analytics_menu",
+    )
+
+    await state.update_data(delete_analytics_alias=row.alias)
+    await state.set_state(AdminStates.waiting_delete_analytics_confirm)
+
+    await callback.message.answer(
+        "Точно удалить этот аналитический промт?",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data == "admin:confirm_delete_analytics")
+async def admin_confirm_delete_analytics_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Подтверждает удаление аналитического промта.
+
+    Что принимает:
+    - callback: callback-запрос Telegram;
+    - state: объект FSMContext;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    data = await state.get_data()
+    analytics_alias = data.get("delete_analytics_alias")
+
+    if not analytics_alias:
+        await callback.message.answer("Не удалось определить аналитический промт.")
+        await send_admin_analytics_menu(callback.message, state, session)
+        return
+
+    repo = AnalyticsPromptRepository(session)
+    row = await repo.get_by_alias(analytics_alias)
+
+    if row is None:
+        await callback.message.answer("Аналитический промт уже удалён.")
+        await send_admin_analytics_menu(callback.message, state, session)
+        return
+
+    if await is_guest_admin_session(state):
+        await callback.message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        await send_admin_analytics_menu(callback.message, state, session)
+        return
+
+    game = await GameRepository(session).get_by_game_id(row.game)
+
+    await DeletedPromptRepository(session).create(
+        game_name=game.name if game is not None else row.game,
+        promt=row.promt,
+    )
+    await repo.delete_by_alias(row.alias)
+
+    await callback.message.answer("Аналитический промт удалён.")
     await send_admin_analytics_menu(callback.message, state, session)
 
 
