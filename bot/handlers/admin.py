@@ -6,6 +6,7 @@
 Отвечают за:
 - вход в админку по паролю;
 - допуск в админку только для конкретного user_id;
+- вход в гостевой режим по специальному паролю;
 - фиксацию инцидентов несанкционированного входа;
 - показ главного меню админки;
 - редактирование приветствия стартового экрана;
@@ -17,7 +18,8 @@
 Как работает:
 - использует FSM для пошаговых сценариев;
 - получает и обновляет данные через репозитории;
-- использует inline-клавиатуры.
+- использует inline-клавиатуры;
+- в гостевом режиме даёт просматривать админку, но не сохраняет изменения.
 
 Что принимает:
 - сообщения Telegram;
@@ -30,6 +32,7 @@
 """
 
 from html import escape
+import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -49,12 +52,40 @@ from database.repositories.admin_login_incident_repository import (
 )
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
+from services.app_logger import AppLogger
 from services.security import hash_password, verify_password
 
 
 router = Router(name="admin-router")
+logger = logging.getLogger(__name__)
 
 ADMIN_USER_ID = 467116941
+GUEST_ADMIN_PASSWORD = "111111"
+GUEST_ADMIN_GREETING = "Это гостевой сеанс. Доступен просмотр, не доступны изменения"
+GUEST_ADMIN_SAVE_BLOCK_MESSAGE = "Гостевой режим: изменения не сохранены."
+
+
+async def is_guest_admin_session(state: FSMContext) -> bool:
+    """
+    Проверяет, находится ли пользователь в гостевом сеансе админки.
+
+    Отвечает за:
+    - чтение признака гостевого режима из FSMContext.
+
+    Как работает:
+    - забирает данные из FSMContext;
+    - возвращает True, если в данных установлен флаг гостевого режима.
+
+    Что принимает:
+    - state: объект FSMContext.
+
+    Что возвращает:
+    - True, если это гостевой сеанс;
+    - False в остальных случаях.
+    """
+
+    data = await state.get_data()
+    return bool(data.get("is_guest_admin", False))
 
 
 async def send_admin_main_menu(
@@ -69,12 +100,14 @@ async def send_admin_main_menu(
     - перевод пользователя в главное состояние админки;
     - получение приветствия админки;
     - получение текстов кнопок меню;
-    - отправку сообщения с inline-клавиатурой.
+    - отправку сообщения с inline-клавиатурой;
+    - показ специального приветствия в гостевом режиме.
 
     Как работает:
     - устанавливает состояние AdminStates.main_menu;
     - читает нужные тексты из таблицы ui_texts;
     - формирует клавиатуру;
+    - если сеанс гостевой, показывает специальное сообщение вместо обычного приветствия;
     - отправляет меню пользователю.
 
     Что принимает:
@@ -99,7 +132,12 @@ async def send_admin_main_menu(
     ]
     texts = await ui_repo.get_many_by_aliases(aliases)
 
+    guest_mode = await is_guest_admin_session(state)
+
     greeting_text = texts["admin_greeting"].value
+    if guest_mode:
+        greeting_text = GUEST_ADMIN_GREETING
+
     keyboard = build_admin_main_keyboard(
         {
             "admin_button_edit_start_greeting": texts["admin_button_edit_start_greeting"].value,
@@ -154,7 +192,7 @@ async def send_text_preview_screen(
     )
 
     await message.answer(
-        f"<b>Текущий текст:</b>\n{escape(text_value)}",
+        f"Текущий текст:\n{escape(text_value)}",
         reply_markup=keyboard,
     )
 
@@ -171,7 +209,8 @@ async def register_unauthorized_admin_attempt(
 
     Как работает:
     - берёт данные пользователя из объекта Telegram;
-    - создаёт запись в таблице admin_login_incidents.
+    - создаёт запись в таблице admin_login_incidents;
+    - пишет технический лог.
 
     Что принимает:
     - message: входящее сообщение Telegram;
@@ -197,6 +236,20 @@ async def register_unauthorized_admin_attempt(
         device=device,
     )
 
+    await AppLogger.warning(
+        event="admin.unauthorized_login_attempt",
+        source=__name__,
+        message="Попытка несанкционированного входа в админку",
+        payload={
+            "user_id": message.from_user.id,
+            "username": message.from_user.username,
+            "first_name": message.from_user.first_name,
+            "last_name": message.from_user.last_name,
+            "device": device,
+        },
+        write_to_db=True,
+    )
+
 
 @router.message(Command("admin"))
 async def admin_command_handler(
@@ -210,9 +263,11 @@ async def admin_command_handler(
     Отвечает за:
     - запуск сценария входа в админку;
     - создание записи пароля для административного user_id при первом входе;
-    - перевод пользователя в состояние ожидания пароля.
+    - перевод пользователя в состояние ожидания пароля;
+    - сброс старых данных админского сеанса.
 
     Как работает:
+    - очищает текущее состояние;
     - создаёт запись в passwords для ADMIN_USER_ID, если её ещё нет;
     - дефолтный пароль равен 123 и хранится в виде хэша;
     - затем просит пользователя ввести пароль.
@@ -226,10 +281,22 @@ async def admin_command_handler(
     - ничего.
     """
 
+    await state.clear()
+
     password_repo = PasswordRepository(session)
     await password_repo.get_or_create(
         user_id=ADMIN_USER_ID,
         default_password_hash=hash_password("123"),
+    )
+
+    await AppLogger.info(
+        event="admin.login_requested",
+        source=__name__,
+        message="Запрошен вход в админку",
+        payload={
+            "user_id": message.from_user.id if message.from_user else None,
+        },
+        write_to_db=True,
     )
 
     await state.set_state(AdminStates.waiting_password)
@@ -247,15 +314,17 @@ async def admin_password_input_handler(
 
     Отвечает за:
     - проверку введённого пароля;
+    - отдельный вход в гостевой режим по паролю 111111;
     - проверку Telegram user_id;
     - фиксацию инцидента при правильном пароле и неверном user_id;
     - перевод в админку при успехе;
     - возврат на старт при ошибке.
 
     Как работает:
-    - получает запись администратора из passwords по ADMIN_USER_ID;
+    - если введён пароль гостевого режима, открывает админку в режиме только для просмотра;
+    - иначе получает запись администратора из passwords по ADMIN_USER_ID;
     - сверяет введённый пароль с хэшем;
-    - если пароль верный и user_id корректный, открывает админку;
+    - если пароль верный и user_id корректный, открывает обычную админку;
     - если пароль верный, но user_id неверный, пишет инцидент и возвращает на старт;
     - если пароль неверный, возвращает на старт.
 
@@ -274,6 +343,22 @@ async def admin_password_input_handler(
 
     raw_password = (message.text or "").strip()
 
+    if raw_password == GUEST_ADMIN_PASSWORD:
+        await state.update_data(is_guest_admin=True)
+
+        await AppLogger.info(
+            event="admin.guest_login_success",
+            source=__name__,
+            message="Успешный вход в гостевой режим админки",
+            payload={
+                "user_id": message.from_user.id,
+            },
+            write_to_db=True,
+        )
+
+        await send_admin_main_menu(message, state, session)
+        return
+
     password_repo = PasswordRepository(session)
     admin_password_row = await password_repo.get_by_user_id(ADMIN_USER_ID)
 
@@ -285,6 +370,16 @@ async def admin_password_input_handler(
     is_password_valid = verify_password(raw_password, admin_password_row.admin)
 
     if not is_password_valid:
+        await AppLogger.warning(
+            event="admin.login_failed_invalid_password",
+            source=__name__,
+            message="Введён неверный пароль админки",
+            payload={
+                "user_id": message.from_user.id,
+            },
+            write_to_db=True,
+        )
+
         await message.answer("Неверный пароль. Возврат на стартовый экран.")
         await send_start_screen(message, state, session)
         return
@@ -294,6 +389,18 @@ async def admin_password_input_handler(
         await message.answer("Доступ запрещён. Попытка зафиксирована.")
         await send_start_screen(message, state, session)
         return
+
+    await state.update_data(is_guest_admin=False)
+
+    await AppLogger.info(
+        event="admin.login_success",
+        source=__name__,
+        message="Успешный вход администратора",
+        payload={
+            "user_id": message.from_user.id,
+        },
+        write_to_db=True,
+    )
 
     await send_admin_main_menu(message, state, session)
 
@@ -441,11 +548,13 @@ async def admin_new_start_greeting_handler(
 
     Отвечает за:
     - валидацию длины текста;
-    - сохранение нового текста в БД;
+    - сохранение нового текста в БД в обычном режиме;
+    - блокировку сохранения в гостевом режиме;
     - возврат в главное меню админки.
 
     Как работает:
     - если длина текста меньше 10 символов, не сохраняет его;
+    - если сеанс гостевой, не пишет ничего в БД;
     - затем в любом случае возвращает пользователя в главное меню админки.
 
     Что принимает:
@@ -458,11 +567,25 @@ async def admin_new_start_greeting_handler(
     """
 
     new_text = (message.text or "").strip()
+    guest_mode = await is_guest_admin_session(state)
 
     if len(new_text) >= 10:
-        ui_repo = UITextRepository(session)
-        await ui_repo.update_value("start_greeting", new_text)
-        await message.answer("Текст обновлён.")
+        if guest_mode:
+            await AppLogger.info(
+                event="admin.guest_attempt_update_start_greeting",
+                source=__name__,
+                message="Гость попытался изменить стартовое приветствие",
+                payload={
+                    "user_id": message.from_user.id if message.from_user else None,
+                    "new_text": new_text,
+                },
+                write_to_db=True,
+            )
+            await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        else:
+            ui_repo = UITextRepository(session)
+            await ui_repo.update_value("start_greeting", new_text)
+            await message.answer("Текст обновлён.")
     else:
         await message.answer("Текст слишком короткий. Возвращаю в админку.")
 
@@ -480,11 +603,13 @@ async def admin_new_admin_greeting_handler(
 
     Отвечает за:
     - валидацию длины текста;
-    - сохранение нового текста в БД;
+    - сохранение нового текста в БД в обычном режиме;
+    - блокировку сохранения в гостевом режиме;
     - возврат в главное меню админки.
 
     Как работает:
     - если длина текста меньше 10 символов, не сохраняет его;
+    - если сеанс гостевой, не пишет ничего в БД;
     - затем в любом случае возвращает пользователя в главное меню админки.
 
     Что принимает:
@@ -497,11 +622,25 @@ async def admin_new_admin_greeting_handler(
     """
 
     new_text = (message.text or "").strip()
+    guest_mode = await is_guest_admin_session(state)
 
     if len(new_text) >= 10:
-        ui_repo = UITextRepository(session)
-        await ui_repo.update_value("admin_greeting", new_text)
-        await message.answer("Текст обновлён.")
+        if guest_mode:
+            await AppLogger.info(
+                event="admin.guest_attempt_update_admin_greeting",
+                source=__name__,
+                message="Гость попытался изменить приветствие админки",
+                payload={
+                    "user_id": message.from_user.id if message.from_user else None,
+                    "new_text": new_text,
+                },
+                write_to_db=True,
+            )
+            await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        else:
+            ui_repo = UITextRepository(session)
+            await ui_repo.update_value("admin_greeting", new_text)
+            await message.answer("Текст обновлён.")
     else:
         await message.answer("Текст слишком короткий. Возвращаю в админку.")
 
@@ -593,7 +732,7 @@ async def admin_button_select_handler(
     await state.set_state(AdminStates.waiting_new_button_text)
 
     await callback.message.answer(
-        f"Текущий текст кнопки:\n<b>{escape(current_value)}</b>\n\n"
+        f"Текущий текст кнопки:\n{escape(current_value)}\n\n"
         "Введите новый текст, от 2 до 30 символов"
     )
 
@@ -610,12 +749,14 @@ async def admin_new_button_text_handler(
     Отвечает за:
     - получение alias редактируемой кнопки из FSM;
     - валидацию длины текста;
-    - сохранение нового текста кнопки;
+    - сохранение нового текста кнопки в обычном режиме;
+    - блокировку сохранения в гостевом режиме;
     - возврат в главное меню админки.
 
     Как работает:
     - читает target_button_alias из FSMContext;
-    - если текст имеет длину от 2 до 30 символов, сохраняет его;
+    - если текст имеет длину от 2 до 30 символов, в обычном режиме сохраняет его;
+    - если сеанс гостевой, ничего не сохраняет;
     - затем возвращает пользователя в главное меню админки.
 
     Что принимает:
@@ -630,11 +771,26 @@ async def admin_new_button_text_handler(
     new_text = (message.text or "").strip()
     data = await state.get_data()
     button_alias = data.get("target_button_alias")
+    guest_mode = await is_guest_admin_session(state)
 
     if button_alias is not None and 2 <= len(new_text) <= 30:
-        ui_repo = UITextRepository(session)
-        await ui_repo.update_value(button_alias, new_text)
-        await message.answer("Текст кнопки обновлён.")
+        if guest_mode:
+            await AppLogger.info(
+                event="admin.guest_attempt_update_button_text",
+                source=__name__,
+                message="Гость попытался изменить текст кнопки",
+                payload={
+                    "user_id": message.from_user.id if message.from_user else None,
+                    "button_alias": button_alias,
+                    "new_text": new_text,
+                },
+                write_to_db=True,
+            )
+            await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        else:
+            ui_repo = UITextRepository(session)
+            await ui_repo.update_value(button_alias, new_text)
+            await message.answer("Текст кнопки обновлён.")
     else:
         await message.answer("Некорректная длина текста. Возвращаю в админку.")
 
@@ -683,13 +839,15 @@ async def admin_current_password_handler(
     Обрабатывает ввод текущего пароля при смене пароля.
 
     Отвечает за:
-    - проверку текущего пароля;
+    - проверку текущего пароля в обычном режиме;
+    - пропуск проверки в гостевом режиме, чтобы можно было пройти сценарий до конца;
     - защиту от несанкционированного изменения пароля;
     - перевод к вводу нового пароля при успехе;
     - возврат на старт при ошибке.
 
     Как работает:
-    - получает хэш административного пароля по ADMIN_USER_ID;
+    - если сеанс гостевой, сразу переводит пользователя к шагу ввода нового пароля;
+    - иначе получает хэш административного пароля по ADMIN_USER_ID;
     - проверяет пароль;
     - если пароль корректен, но user_id не административный, пишет инцидент и уводит на старт;
     - если всё корректно, переводит к шагу ввода нового пароля.
@@ -705,6 +863,12 @@ async def admin_current_password_handler(
 
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.")
+        return
+
+    guest_mode = await is_guest_admin_session(state)
+    if guest_mode:
+        await state.set_state(AdminStates.waiting_new_password)
+        await message.answer("Введите новый пароль:")
         return
 
     raw_password = (message.text or "").strip()
@@ -774,13 +938,15 @@ async def admin_new_password_confirm_handler(
 
     Отвечает за:
     - сравнение двух вводов нового пароля;
-    - сохранение нового хэша в БД;
+    - сохранение нового хэша в БД в обычном режиме;
+    - блокировку сохранения в гостевом режиме;
     - возврат в главное меню админки.
 
     Как работает:
     - получает ранее введённый пароль из FSMContext;
     - сравнивает его с повторным вводом;
-    - при совпадении сохраняет хэш в БД для ADMIN_USER_ID;
+    - при совпадении в обычном режиме сохраняет хэш в БД для ADMIN_USER_ID;
+    - в гостевом режиме не сохраняет ничего;
     - затем возвращает пользователя в админку.
 
     Что принимает:
@@ -795,6 +961,7 @@ async def admin_new_password_confirm_handler(
     data = await state.get_data()
     first_password = data.get("new_password", "")
     second_password = (message.text or "").strip()
+    guest_mode = await is_guest_admin_session(state)
 
     if not first_password or first_password != second_password:
         await message.answer("Пароли не совпали. Возвращаю в админку.")
@@ -802,10 +969,35 @@ async def admin_new_password_confirm_handler(
         await send_admin_main_menu(message, state, session)
         return
 
+    if guest_mode:
+        await AppLogger.info(
+            event="admin.guest_attempt_change_password",
+            source=__name__,
+            message="Гость попытался изменить пароль администратора",
+            payload={
+                "user_id": message.from_user.id if message.from_user else None,
+            },
+            write_to_db=True,
+        )
+        await state.update_data(new_password=None)
+        await message.answer(GUEST_ADMIN_SAVE_BLOCK_MESSAGE)
+        await send_admin_main_menu(message, state, session)
+        return
+
     password_repo = PasswordRepository(session)
     await password_repo.update_password_hash(
         user_id=ADMIN_USER_ID,
         new_password_hash=hash_password(second_password),
+    )
+
+    await AppLogger.info(
+        event="admin.password_changed",
+        source=__name__,
+        message="Пароль администратора изменён",
+        payload={
+            "user_id": message.from_user.id if message.from_user else None,
+        },
+        write_to_db=True,
     )
 
     await state.update_data(new_password=None)
