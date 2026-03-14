@@ -9,6 +9,7 @@
 - последовательный запуск аналитических промтов по игре;
 - разбор JSON-ответов ИИ;
 - отправку пользователю результатов аналитики;
+- запись результатов аналитики в таблицу user_results;
 - подсчёт общей суммы баллов.
 
 Как работает:
@@ -18,6 +19,7 @@
 - загружает все аналитические промты для game_id;
 - по очереди отправляет каждый аналитический промт и весь текст диалога в ИИ;
 - ожидает JSON вида {"rating": ..., "text": ...};
+- сохраняет каждый результат в user_results;
 - показывает пользователю результаты по очереди;
 - в конце отправляет общую сумму баллов.
 
@@ -33,6 +35,7 @@
 """
 
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import re
@@ -47,6 +50,7 @@ from config import settings
 from database.repositories.analytics_prompt_repository import AnalyticsPromptRepository
 from database.repositories.dialog_message_repository import DialogMessageRepository
 from database.repositories.ui_text_repository import UITextRepository
+from database.repositories.user_result_repository import UserResultRepository
 from services.ai_client import get_ai_client
 from services.app_logger import AppLogger
 
@@ -311,6 +315,7 @@ async def run_dialog_analysis_and_send_results(
     - печатает его в консоль для отладки;
     - загружает аналитические промты для игры;
     - поочерёдно запускает каждый аналитический промт;
+    - сохраняет каждый результат в user_results;
     - удаляет сообщение ожидания;
     - отправляет результаты по одному с паузой 0.2 секунды;
     - отправляет общую сумму баллов.
@@ -329,6 +334,7 @@ async def run_dialog_analysis_and_send_results(
     ui_repo = UITextRepository(session)
     dialog_repo = DialogMessageRepository(session)
     analytics_repo = AnalyticsPromptRepository(session)
+    user_result_repo = UserResultRepository(session)
 
     ui_items = await ui_repo.get_many_by_aliases(
         [
@@ -386,6 +392,10 @@ async def run_dialog_analysis_and_send_results(
         await bot.send_message(chat_id=chat_id, text=escape(no_prompts_text))
         return 0.0
 
+    first_dialog_row = dialog_rows[0]
+    result_user_id = first_dialog_row.user_id
+    result_subgame_id = first_dialog_row.subgame_id
+
     results_to_send: list[str] = []
     total_score = 0.0
 
@@ -418,6 +428,17 @@ async def run_dialog_analysis_and_send_results(
             )
 
         total_score += result.rating
+
+        await user_result_repo.create_result(
+            user_id=result_user_id,
+            dialog_id=dialog_id,
+            game_id=game_id,
+            subgame_id=result_subgame_id,
+            analitics_alias=analytics_prompt.alias,
+            analitics_score=result.rating,
+            analitics_text=result.text,
+        )
+
         results_to_send.append(
             f"{format_score(result.rating)}\n\r{result.text}"
         )

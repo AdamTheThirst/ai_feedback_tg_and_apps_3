@@ -5,6 +5,8 @@
 
 Отвечают за:
 - команду /start;
+- первичную регистрацию пользователя в боте;
+- запрос имени пользователя при первом запуске;
 - вывод стартового приветствия;
 - вывод стартового меню;
 - обработку заглушек Энциклопедия и Личный кабинет;
@@ -12,11 +14,12 @@
 - отправку стартового экрана напрямую через bot.send_message.
 
 Как работает:
-- очищает текущее состояние;
+- при /start очищает текущее состояние;
 - отменяет активный таймер игрового диалога;
-- переводит пользователя в базовое состояние;
-- получает тексты и список игр из БД;
-- отправляет стартовое сообщение с клавиатурой.
+- проверяет пользователя в таблице users;
+- если пользователя нет, создаёт запись и просит ввести имя;
+- если имя ещё не заполнено, тоже просит ввести имя;
+- после заполнения имени показывает стартовый экран.
 
 Что принимает:
 - сообщения Telegram;
@@ -40,12 +43,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.main_keyboards import build_start_menu_keyboard
 from bot.states.common import MainMenuStates
+from bot.states.user import UserStates
 from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
+from database.repositories.user_repository import UserRepository
 from services.game_timer import cancel_dialog_timer
 
 router = Router(name="start-router")
 logger = logging.getLogger(__name__)
+
+ASK_NAME_TEXT = "Пожалуйста, введите своё имя (это имя будет использоваться только в боте)"
 
 
 def build_technical_user_block(message: Message) -> str:
@@ -143,6 +150,58 @@ async def build_start_screen_payload(
     )
 
     return greeting_text, keyboard
+
+
+async def ensure_user_exists_or_request_name(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> bool:
+    """
+    Проверяет, зарегистрирован ли пользователь в таблице users.
+
+    Как работает:
+    - если записи нет, создаёт пользователя без имени;
+    - если имя пустое, переводит пользователя в состояние ожидания имени;
+    - если всё заполнено, разрешает переход к стартовому экрану.
+
+    Что принимает:
+    - message: входящее сообщение;
+    - state: FSMContext;
+    - session: активная сессия БД.
+
+    Что возвращает:
+    - True, если можно продолжать сценарий;
+    - False, если у пользователя нужно запросить имя.
+    """
+
+    if message.from_user is None:
+        await message.answer("Не удалось определить пользователя.")
+        return False
+
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_user_id(message.from_user.id)
+
+    if user is None:
+        await user_repo.create_placeholder(user_id=message.from_user.id)
+
+        logger.info(
+            "Создан новый пользователь без имени. user_id=%s",
+            message.from_user.id,
+        )
+
+        await state.clear()
+        await state.set_state(UserStates.waiting_name)
+        await message.answer(ASK_NAME_TEXT)
+        return False
+
+    if not user.name:
+        await state.clear()
+        await state.set_state(UserStates.waiting_name)
+        await message.answer(ASK_NAME_TEXT)
+        return False
+
+    return True
 
 
 async def send_start_screen(
@@ -249,6 +308,60 @@ async def start_command_handler(
     - ничего.
     """
 
+    if message.from_user is not None:
+        await cancel_dialog_timer(message.from_user.id)
+
+    if not await ensure_user_exists_or_request_name(message, state, session):
+        return
+
+    await send_start_screen(message, state, session)
+
+
+@router.message(UserStates.waiting_name)
+async def user_name_input_handler(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """
+    Обрабатывает ввод имени пользователя при первом запуске.
+
+    Как работает:
+    - принимает текст имени;
+    - сохраняет его в таблицу users;
+    - после сохранения отправляет стартовый экран.
+
+    Что принимает:
+    - message: входящее сообщение;
+    - state: FSMContext;
+    - session: активная сессия БД.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    if message.from_user is None:
+        await message.answer("Не удалось определить пользователя.")
+        return
+
+    name = (message.text or "").strip()
+
+    if len(name) < 2:
+        await message.answer("Имя слишком короткое. Пожалуйста, введите имя ещё раз.")
+        return
+
+    user_repo = UserRepository(session)
+    await user_repo.update_name(
+        user_id=message.from_user.id,
+        name=name[:255],
+    )
+
+    logger.info(
+        "Пользователь сохранил имя. user_id=%s name=%s",
+        message.from_user.id,
+        name[:255],
+    )
+
     await send_start_screen(message, state, session)
 
 
@@ -268,6 +381,7 @@ async def encyclopedia_stub_handler(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
+    # ЭТО ЗАГЛУШКА
     await callback.message.answer("Раздел «Энциклопедия» пока не активен.")
 
 
@@ -287,4 +401,5 @@ async def profile_stub_handler(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
+    # ЭТО ЗАГЛУШКА
     await callback.message.answer("Раздел «Личный кабинет» пока не активен.")

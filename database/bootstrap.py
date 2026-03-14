@@ -35,11 +35,14 @@ from database.models import (
     GamePrompt,
     Password,
     UIText,
+    User,
+    UserResult,
 )  # noqa: F401
 from database.repositories.game_prompt_repository import GamePromptRepository
 from database.repositories.game_repository import GameRepository
 from database.repositories.ui_text_repository import UITextRepository
 from database.session import SessionFactory, engine
+
 
 DEFAULT_UI_TEXTS: list[dict[str, str | int | None]] = [
     {

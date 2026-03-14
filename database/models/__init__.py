@@ -26,6 +26,8 @@ from database.models.game import Game
 from database.models.game_prompt import GamePrompt
 from database.models.password import Password
 from database.models.ui_text import UIText
+from database.models.user import User
+from database.models.user_result import UserResult
 
 __all__ = [
     "AdminLoginIncident",
@@ -37,4 +39,6 @@ __all__ = [
     "GamePrompt",
     "Password",
     "UIText",
+    "User",
+    "UserResult",
 ]
