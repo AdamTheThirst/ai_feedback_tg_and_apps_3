@@ -1,24 +1,22 @@
-# app/bot/handlers/start.py
+# bot/handlers/start.py
 
 """
-Файл: app/bot/handlers/start.py
+Обработчики стартового экрана.
 
-Обработчик команды /start.
-
-Отвечает за:
-- перевод пользователя в исходное состояние FSM;
-- выход из админки при необходимости;
-- отправку стартового приветствия;
-- вывод технической информации о пользователе.
+Отвечают за:
+- команду /start;
+- вывод стартового приветствия;
+- вывод стартового меню с inline-кнопками;
+- обработку заглушек Энциклопедия и Личный кабинет.
 
 Как работает:
 - очищает текущее состояние;
-- устанавливает базовое состояние MainMenuStates.idle;
-- получает текст приветствия из базы;
-- отправляет сообщение пользователю.
+- переводит пользователя в базовое состояние FSM;
+- получает тексты из базы;
+- отправляет приветствие и клавиатуру.
 
 Что принимает:
-- входящее сообщение Telegram;
+- входящие сообщения и callback-запросы Telegram;
 - FSMContext;
 - сессию базы данных.
 
@@ -29,12 +27,13 @@
 import json
 from html import escape
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.keyboards.main_keyboards import build_start_menu_keyboard
 from bot.states.common import MainMenuStates
 from database.repositories.ui_text_repository import UITextRepository
 
@@ -96,12 +95,15 @@ async def send_start_screen(
     Отвечает за:
     - перевод пользователя в исходное состояние FSM;
     - получение стартового приветствия из БД;
+    - получение кнопок стартового меню;
     - добавление технической информации в сообщение.
 
     Как работает:
     - очищает текущее состояние;
     - устанавливает MainMenuStates.idle;
     - получает текст start_greeting из базы;
+    - получает игровые кнопки первого уровня;
+    - получает тексты кнопок-заглушек;
     - отправляет итоговое сообщение пользователю.
 
     Что принимает:
@@ -117,17 +119,31 @@ async def send_start_screen(
     await state.set_state(MainMenuStates.idle)
 
     ui_repo = UITextRepository(session)
-    start_text = await ui_repo.get_by_alias("start_greeting")
 
+    start_text = await ui_repo.get_by_alias("start_greeting")
     greeting_text = "Привет, это текст приветствия первого экрана"
     if start_text is not None and start_text.is_active:
         greeting_text = start_text.value
+
+    first_level_game_buttons = await ui_repo.get_game_buttons(level=0)
+    static_buttons = await ui_repo.get_many_by_aliases(
+        ["btn_encyclopedia", "btn_profile"]
+    )
+
+    encyclopedia_text = static_buttons["btn_encyclopedia"].value
+    profile_text = static_buttons["btn_profile"].value
+
+    keyboard = build_start_menu_keyboard(
+        first_level_game_buttons=first_level_game_buttons,
+        encyclopedia_text=encyclopedia_text,
+        profile_text=profile_text,
+    )
 
     # ТЕХНИЧЕСКИЙ БЛОК: этот кусок можно потом просто закомментировать целиком.
     technical_info = build_technical_user_block(message)
 
     final_text = f"{escape(greeting_text)}{technical_info}"
-    await message.answer(final_text)
+    await message.answer(final_text, reply_markup=keyboard)
 
 
 @router.message(Command("start"))
@@ -141,7 +157,7 @@ async def start_command_handler(
 
     Отвечает за:
     - запуск стартового сценария приложения;
-    - выход из админки, если пользователь был внутри неё;
+    - выход из админки и других состояний;
     - показ первого экрана.
 
     Как работает:
@@ -157,3 +173,59 @@ async def start_command_handler(
     """
 
     await send_start_screen(message, state, session)
+
+
+@router.callback_query(F.data == "main:stub:encyclopedia")
+async def encyclopedia_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Обрабатывает нажатие на кнопку Энциклопедия.
+
+    Отвечает за:
+    - временную заглушку для неактивного раздела.
+
+    Как работает:
+    - отвечает на callback;
+    - отправляет пользователю временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Раздел «Энциклопедия» пока не активен.")
+
+
+@router.callback_query(F.data == "main:stub:profile")
+async def profile_stub_handler(callback: CallbackQuery) -> None:
+    """
+    Обрабатывает нажатие на кнопку Личный кабинет.
+
+    Отвечает за:
+    - временную заглушку для неактивного раздела.
+
+    Как работает:
+    - отвечает на callback;
+    - отправляет пользователю временное сообщение.
+
+    Что принимает:
+    - callback: callback-запрос Telegram.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    await callback.answer()
+
+    if callback.message is None:
+        return
+
+    # ЭТО ЗАГЛУШКА
+    await callback.message.answer("Раздел «Личный кабинет» пока не активен.")

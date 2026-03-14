@@ -1,8 +1,6 @@
-# app/services/security.py
+# services/security.py
 
 """
-Файл: app/services/security.py
-
 Сервис для работы с паролями.
 
 Отвечает за:

@@ -1,8 +1,6 @@
-# app/database/session.py
+# database/session.py
 
 """
-Файл: app/database/session.py
-
 Настройка подключения к базе данных.
 
 Отвечает за:

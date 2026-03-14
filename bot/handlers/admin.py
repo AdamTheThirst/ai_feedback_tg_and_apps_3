@@ -1,12 +1,12 @@
-# app/bot/handlers/admin.py
+# bot/handlers/admin.py
 
 """
-Файл: app/bot/handlers/admin.py
-
 Обработчики административного раздела.
 
-Отвечает за:
+Отвечают за:
 - вход в админку по паролю;
+- допуск в админку только для конкретного user_id;
+- фиксацию инцидентов несанкционированного входа;
 - показ главного меню админки;
 - редактирование приветствия стартового экрана;
 - редактирование приветствия админки;
@@ -44,12 +44,17 @@ from bot.keyboards.admin_keyboards import (
     build_confirm_keyboard,
 )
 from bot.states.admin import AdminStates
+from database.repositories.admin_login_incident_repository import (
+    AdminLoginIncidentRepository,
+)
 from database.repositories.password_repository import PasswordRepository
 from database.repositories.ui_text_repository import UITextRepository
 from services.security import hash_password, verify_password
 
 
 router = Router(name="admin-router")
+
+ADMIN_USER_ID = 467116941
 
 
 async def send_admin_main_menu(
@@ -154,6 +159,45 @@ async def send_text_preview_screen(
     )
 
 
+async def register_unauthorized_admin_attempt(
+    message: Message,
+    session: AsyncSession,
+) -> None:
+    """
+    Фиксирует инцидент несанкционированного входа в админку.
+
+    Отвечает за:
+    - запись попытки входа с правильным паролем, но с неправильным user_id.
+
+    Как работает:
+    - берёт данные пользователя из объекта Telegram;
+    - создаёт запись в таблице admin_login_incidents.
+
+    Что принимает:
+    - message: входящее сообщение Telegram;
+    - session: активная сессия базы данных.
+
+    Что возвращает:
+    - ничего.
+    """
+
+    if message.from_user is None:
+        return
+
+    incident_repo = AdminLoginIncidentRepository(session)
+
+    # Telegram Bot API не предоставляет надёжной информации об устройстве пользователя.
+    device = None
+
+    await incident_repo.create_incident(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+        device=device,
+    )
+
+
 @router.message(Command("admin"))
 async def admin_command_handler(
     message: Message,
@@ -165,11 +209,11 @@ async def admin_command_handler(
 
     Отвечает за:
     - запуск сценария входа в админку;
-    - создание дефолтного пароля пользователя при первом входе;
+    - создание записи пароля для административного user_id при первом входе;
     - перевод пользователя в состояние ожидания пароля.
 
     Как работает:
-    - создаёт запись в passwords, если её ещё нет;
+    - создаёт запись в passwords для ADMIN_USER_ID, если её ещё нет;
     - дефолтный пароль равен 123 и хранится в виде хэша;
     - затем просит пользователя ввести пароль.
 
@@ -182,13 +226,9 @@ async def admin_command_handler(
     - ничего.
     """
 
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.")
-        return
-
     password_repo = PasswordRepository(session)
     await password_repo.get_or_create(
-        user_id=message.from_user.id,
+        user_id=ADMIN_USER_ID,
         default_password_hash=hash_password("123"),
     )
 
@@ -207,14 +247,17 @@ async def admin_password_input_handler(
 
     Отвечает за:
     - проверку введённого пароля;
+    - проверку Telegram user_id;
+    - фиксацию инцидента при правильном пароле и неверном user_id;
     - перевод в админку при успехе;
     - возврат на старт при ошибке.
 
     Как работает:
-    - получает запись пользователя из passwords;
+    - получает запись администратора из passwords по ADMIN_USER_ID;
     - сверяет введённый пароль с хэшем;
-    - при успехе показывает меню админки;
-    - при ошибке показывает стартовый экран.
+    - если пароль верный и user_id корректный, открывает админку;
+    - если пароль верный, но user_id неверный, пишет инцидент и возвращает на старт;
+    - если пароль неверный, возвращает на старт.
 
     Что принимает:
     - message: входящее сообщение Telegram;
@@ -232,19 +275,27 @@ async def admin_password_input_handler(
     raw_password = (message.text or "").strip()
 
     password_repo = PasswordRepository(session)
-    password_row = await password_repo.get_by_user_id(message.from_user.id)
+    admin_password_row = await password_repo.get_by_user_id(ADMIN_USER_ID)
 
-    if password_row is None:
-        await message.answer("Пароль не найден. Попробуйте ещё раз через /admin.")
-        await state.clear()
+    if admin_password_row is None:
+        await message.answer("Пароль администратора не найден.")
+        await send_start_screen(message, state, session)
         return
 
-    if verify_password(raw_password, password_row.admin):
-        await send_admin_main_menu(message, state, session)
+    is_password_valid = verify_password(raw_password, admin_password_row.admin)
+
+    if not is_password_valid:
+        await message.answer("Неверный пароль. Возврат на стартовый экран.")
+        await send_start_screen(message, state, session)
         return
 
-    await message.answer("Неверный пароль. Возврат на стартовый экран.")
-    await send_start_screen(message, state, session)
+    if message.from_user.id != ADMIN_USER_ID:
+        await register_unauthorized_admin_attempt(message, session)
+        await message.answer("Доступ запрещён. Попытка зафиксирована.")
+        await send_start_screen(message, state, session)
+        return
+
+    await send_admin_main_menu(message, state, session)
 
 
 @router.callback_query(F.data == "admin:edit_start_greeting")
@@ -633,13 +684,15 @@ async def admin_current_password_handler(
 
     Отвечает за:
     - проверку текущего пароля;
+    - защиту от несанкционированного изменения пароля;
     - перевод к вводу нового пароля при успехе;
     - возврат на старт при ошибке.
 
     Как работает:
-    - сверяет введённый пароль с хэшем в БД;
-    - при успехе переводит в waiting_new_password;
-    - при ошибке вызывает стартовый экран.
+    - получает хэш административного пароля по ADMIN_USER_ID;
+    - проверяет пароль;
+    - если пароль корректен, но user_id не административный, пишет инцидент и уводит на старт;
+    - если всё корректно, переводит к шагу ввода нового пароля.
 
     Что принимает:
     - message: входящее сообщение Telegram;
@@ -656,10 +709,23 @@ async def admin_current_password_handler(
 
     raw_password = (message.text or "").strip()
     password_repo = PasswordRepository(session)
-    password_row = await password_repo.get_by_user_id(message.from_user.id)
+    admin_password_row = await password_repo.get_by_user_id(ADMIN_USER_ID)
 
-    if password_row is None or not verify_password(raw_password, password_row.admin):
+    if admin_password_row is None:
+        await message.answer("Пароль администратора не найден.")
+        await send_start_screen(message, state, session)
+        return
+
+    is_password_valid = verify_password(raw_password, admin_password_row.admin)
+
+    if not is_password_valid:
         await message.answer("Текущий пароль неверный. Возврат на стартовый экран.")
+        await send_start_screen(message, state, session)
+        return
+
+    if message.from_user.id != ADMIN_USER_ID:
+        await register_unauthorized_admin_attempt(message, session)
+        await message.answer("Доступ запрещён. Попытка зафиксирована.")
         await send_start_screen(message, state, session)
         return
 
@@ -714,7 +780,7 @@ async def admin_new_password_confirm_handler(
     Как работает:
     - получает ранее введённый пароль из FSMContext;
     - сравнивает его с повторным вводом;
-    - при совпадении сохраняет хэш в БД;
+    - при совпадении сохраняет хэш в БД для ADMIN_USER_ID;
     - затем возвращает пользователя в админку.
 
     Что принимает:
@@ -725,10 +791,6 @@ async def admin_new_password_confirm_handler(
     Что возвращает:
     - ничего.
     """
-
-    if message.from_user is None:
-        await message.answer("Не удалось определить пользователя.")
-        return
 
     data = await state.get_data()
     first_password = data.get("new_password", "")
@@ -742,7 +804,7 @@ async def admin_new_password_confirm_handler(
 
     password_repo = PasswordRepository(session)
     await password_repo.update_password_hash(
-        user_id=message.from_user.id,
+        user_id=ADMIN_USER_ID,
         new_password_hash=hash_password(second_password),
     )
 

@@ -1,16 +1,14 @@
-# app/database/models/__init__.py
+# database/models/__init__.py
 
 """
-Файл: app/database/models/__init__.py
-
 Пакетный модуль моделей.
 
 Отвечает за:
-- удобный импорт всех моделей в одном месте;
-- регистрацию моделей перед созданием таблиц.
+- удобный импорт всех моделей из одного места;
+- регистрацию моделей в metadata SQLAlchemy перед созданием таблиц.
 
 Как работает:
-- импортирует все модели, которые должны попасть в metadata SQLAlchemy.
+- импортирует все ORM-модели, которые должны участвовать в create_all.
 
 Что принимает:
 - ничего.
@@ -19,7 +17,8 @@
 - набор импортированных моделей.
 """
 
+from database.models.admin_login_incident import AdminLoginIncident
 from database.models.password import Password
 from database.models.ui_text import UIText
 
-__all__ = ["Password", "UIText"]
+__all__ = ["AdminLoginIncident", "Password", "UIText"]

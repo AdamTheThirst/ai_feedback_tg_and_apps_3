@@ -1,25 +1,25 @@
-# app/database/repositories/ui_text_repository.py
+# database/repositories/ui_text_repository.py
 
 """
-Файл: app/database/repositories/ui_text_repository.py
-
 Репозиторий для работы с таблицей ui_texts.
 
 Отвечает за:
 - получение текстов по alias;
-- получение текстов по type;
-- создание текстов по умолчанию;
-- обновление существующих текстов.
+- получение наборов текстов по alias;
+- получение всех кнопок;
+- получение игровых кнопок по уровню;
+- создание записей по умолчанию;
+- обновление текста существующих записей.
 
 Как работает:
-- инкапсулирует SQLAlchemy-запросы;
-- упрощает работу обработчиков и сервисов.
+- скрывает SQLAlchemy-запросы от обработчиков;
+- предоставляет удобные методы для работы с UI-текстами.
 
 Что принимает:
 - активную AsyncSession.
 
 Что возвращает:
-- объекты UIText или коллекции текстов.
+- объекты UIText или коллекции объектов UIText.
 """
 
 from sqlalchemy import select
@@ -30,17 +30,18 @@ from database.models.ui_text import UIText
 
 class UITextRepository:
     """
-    Репозиторий для CRUD-операций над UI-текстами.
+    Репозиторий для таблицы ui_texts.
 
     Отвечает за:
-    - чтение записей из таблицы ui_texts;
-    - обновление текстов;
-    - создание текстов по умолчанию.
+    - чтение UI-текстов;
+    - чтение игровых кнопок;
+    - обновление значений текстов;
+    - начальное создание записей.
 
     Как работает:
-    - получает на вход SQLAlchemy-сессию;
-    - выполняет нужные ORM-запросы;
-    - при изменениях делает commit.
+    - получает в конструкторе активную SQLAlchemy-сессию;
+    - выполняет ORM-запросы;
+    - при изменении данных делает commit.
 
     Что принимает:
     - session: активная асинхронная сессия БД.
@@ -64,13 +65,13 @@ class UITextRepository:
 
     async def get_by_alias(self, alias: str) -> UIText | None:
         """
-        Получает один UI-текст по его alias.
+        Получает запись по alias.
 
         Отвечает за:
-        - поиск конкретной записи по уникальному ключу alias.
+        - поиск одного UI-текста по уникальному ключу.
 
         Как работает:
-        - выполняет select-запрос;
+        - выполняет select-запрос по alias;
         - возвращает найденный объект или None.
 
         Что принимает:
@@ -87,20 +88,20 @@ class UITextRepository:
 
     async def get_many_by_aliases(self, aliases: list[str]) -> dict[str, UIText]:
         """
-        Получает несколько UI-текстов по списку alias.
+        Получает несколько записей по списку alias.
 
         Отвечает за:
-        - пакетное получение набора текстов за один запрос.
+        - пакетную выборку UI-текстов за один запрос.
 
         Как работает:
         - выполняет запрос с условием IN;
-        - собирает результат в словарь alias -> UIText.
+        - собирает результат в словарь alias -> объект.
 
         Что принимает:
         - aliases: список alias.
 
         Что возвращает:
-        - словарь с найденными объектами UIText.
+        - словарь alias -> UIText.
         """
 
         result = await self.session.execute(
@@ -134,12 +135,52 @@ class UITextRepository:
         )
         return list(result.scalars().all())
 
+    async def get_game_buttons(self, level: int, game: str | None = None) -> list[UIText]:
+        """
+        Получает игровые кнопки для указанного уровня меню.
+
+        Отвечает за:
+        - выборку кнопок, которые строят игровые меню динамически.
+
+        Как работает:
+        - выбирает только активные записи типа button;
+        - фильтрует по level;
+        - если передан game, дополнительно фильтрует по нему;
+        - если game не передан, возвращает кнопки верхнего игрового уровня.
+
+        Что принимает:
+        - level: уровень меню;
+        - game: alias игры или None.
+
+        Что возвращает:
+        - список кнопок UIText, отсортированных по полю order.
+        """
+
+        query = select(UIText).where(
+            UIText.type == "button",
+            UIText.is_active.is_(True),
+            UIText.level == level,
+        )
+
+        if game is None:
+            query = query.where(UIText.game.is_not(None))
+        else:
+            query = query.where(UIText.game == game)
+
+        query = query.order_by(UIText.order.asc(), UIText.id.asc())
+
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def create_if_missing(
         self,
         alias: str,
         value: str,
         text_type: str,
         description: str,
+        game: str | None = None,
+        level: int | None = None,
+        order: int | None = None,
     ) -> UIText:
         """
         Создаёт UI-текст, если его ещё нет в базе.
@@ -148,7 +189,7 @@ class UITextRepository:
         - первичное заполнение таблицы ui_texts начальными значениями.
 
         Как работает:
-        - сначала пытается найти запись по alias;
+        - сначала ищет запись по alias;
         - если запись уже существует, возвращает её;
         - если записи нет, создаёт новую и делает commit.
 
@@ -156,7 +197,10 @@ class UITextRepository:
         - alias: уникальный ключ;
         - value: текст;
         - text_type: тип записи, например button или text;
-        - description: описание назначения.
+        - description: описание назначения;
+        - game: alias игры или None;
+        - level: уровень меню или None;
+        - order: порядок вывода или None.
 
         Что возвращает:
         - существующий или созданный объект UIText.
@@ -171,6 +215,9 @@ class UITextRepository:
             value=value,
             type=text_type,
             description=description,
+            game=game,
+            level=level,
+            order=order,
             is_active=True,
         )
         self.session.add(item)
@@ -187,7 +234,7 @@ class UITextRepository:
 
         Как работает:
         - ищет запись по alias;
-        - если запись найдена, меняет поле value;
+        - если запись найдена, обновляет поле value;
         - сохраняет изменения через commit.
 
         Что принимает:

@@ -1,22 +1,22 @@
-# app/database/models/ui_text.py
+# database/models/ui_text.py
 
 """
-Файл: app/database/models/ui_text.py
-
 Модель таблицы ui_texts.
 
 Отвечает за:
-- хранение всех UI-текстов системы;
-- хранение подписей кнопок;
-- возможность редактировать тексты через админку.
+- хранение всех текстов интерфейса;
+- хранение надписей на кнопках;
+- хранение игровых кнопок с дополнительной разметкой по уровням меню.
 
 Как работает:
-- каждая запись хранится в формате ключ-значение;
-- поле alias используется как уникальный ключ;
-- поле type показывает, это обычный текст или текст кнопки.
+- каждая запись хранится по принципу ключ-значение;
+- alias — уникальный ключ;
+- value — отображаемый текст;
+- type — тип записи: text или button;
+- game, level, order используются для динамического построения игровых меню.
 
 Что принимает:
-- данные для UI-текста.
+- данные UI-текста.
 
 Что возвращает:
 - ORM-модель UIText.
@@ -30,24 +30,31 @@ from database.base import Base, TimestampMixin
 
 class UIText(TimestampMixin, Base):
     """
-    Таблица с UI-текстами приложения.
+    Таблица с текстами интерфейса.
 
     Отвечает за:
-    - хранение редактируемых текстов интерфейса;
+    - хранение сообщений интерфейса;
     - хранение надписей на кнопках;
-    - централизованное управление отображаемыми текстами.
+    - хранение параметров игровых кнопок для динамического меню.
 
     Как работает:
     - alias является уникальным идентификатором текста;
-    - value содержит сам текст;
-    - type хранит тип записи: button или text;
-    - description объясняет, где этот текст используется.
+    - value содержит отображаемый текст;
+    - type показывает, это кнопка или текстовое сообщение;
+    - game хранит alias игры, например game_0;
+    - level хранит уровень меню:
+      - 0 — главное меню игры;
+      - 1 — внутреннее меню конкретной игры;
+    - order хранит порядок показа кнопки в меню.
 
     Что принимает:
-    - alias: уникальный ключ текста;
-    - value: значение текста;
-    - type: тип текста;
-    - description: описание назначения;
+    - alias: уникальный ключ;
+    - value: текст;
+    - type: тип записи;
+    - description: служебное описание;
+    - game: alias игры или null;
+    - level: уровень меню или null;
+    - order: порядок показа или null;
     - is_active: флаг активности.
 
     Что возвращает:
@@ -61,4 +68,9 @@ class UIText(TimestampMixin, Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    game: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

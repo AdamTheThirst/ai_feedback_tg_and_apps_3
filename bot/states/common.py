@@ -1,8 +1,6 @@
-# app/bot/states/common.py
+# bot/states/common.py
 
 """
-Файл: app/bot/states/common.py
-
 Общие FSM-состояния приложения.
 
 Отвечает за:

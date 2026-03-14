@@ -1,8 +1,6 @@
-# app/bot/keyboards/admin_keyboards.py
+# bot/keyboards/admin_keyboards.py
 
 """
-Файл: app/bot/keyboards/admin_keyboards.py
-
 Клавиатуры для админки.
 
 Отвечает за:

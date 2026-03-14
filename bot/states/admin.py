@@ -1,8 +1,6 @@
-# app/bot/states/admin.py
+# bot/states/admin.py
 
 """
-Файл: app/bot/states/admin.py
-
 FSM-состояния для админки.
 
 Отвечает за:
