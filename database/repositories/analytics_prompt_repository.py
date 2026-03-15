@@ -7,9 +7,10 @@
 - создание аналитических промтов;
 - получение одного аналитического промта;
 - получение списка аналитических промтов;
-- получение аналитических промтов по конкретной игре;
+- получение списка аналитических промтов по игре;
 - обновление аналитического промта;
-- удаление аналитического промта.
+- удаление аналитического промта;
+- удаление аналитических промтов по игре.
 
 Как работает:
 - инкапсулирует SQLAlchemy-запросы;
@@ -100,11 +101,7 @@ class AnalyticsPromptRepository:
 
     async def list_by_game(self, game_id: str) -> list[AnalyticsPrompt]:
         """
-        Получает список аналитических промтов для конкретной игры.
-
-        Как работает:
-        - выбирает записи по полю game;
-        - сортирует их по id в порядке создания.
+        Получает список аналитических промтов по game_id.
 
         Что принимает:
         - game_id: системный game_id игры.
@@ -196,5 +193,21 @@ class AnalyticsPromptRepository:
 
         await self.session.execute(
             delete(AnalyticsPrompt).where(AnalyticsPrompt.alias == alias)
+        )
+        await self.session.commit()
+
+    async def delete_by_game(self, game_id: str) -> None:
+        """
+        Удаляет все аналитические промты игры по game_id.
+
+        Что принимает:
+        - game_id: системный game_id игры.
+
+        Что возвращает:
+        - ничего.
+        """
+
+        await self.session.execute(
+            delete(AnalyticsPrompt).where(AnalyticsPrompt.game == game_id)
         )
         await self.session.commit()

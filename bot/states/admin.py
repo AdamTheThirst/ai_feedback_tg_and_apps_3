@@ -47,6 +47,7 @@ class AdminStates(StatesGroup):
     """
 
     waiting_password = State()
+
     main_menu = State()
     tools_menu = State()
     analytics_menu = State()
@@ -60,19 +61,25 @@ class AdminStates(StatesGroup):
     waiting_new_password_confirm = State()
 
     waiting_new_game_name = State()
+    waiting_delete_game_select = State()
+    waiting_delete_game_confirm = State()
 
+    waiting_add_prompt_select_game = State()
     waiting_new_prompt_button_name = State()
     waiting_new_prompt_conditions = State()
     waiting_new_prompt_text = State()
     waiting_new_prompt_image = State()
 
+    waiting_edit_prompt_select = State()
     waiting_edit_prompt_name = State()
     waiting_edit_prompt_conditions = State()
     waiting_edit_prompt_text = State()
     waiting_edit_prompt_image = State()
 
+    waiting_toggle_prompt_select = State()
+
+    waiting_delete_prompt_select = State()
     waiting_delete_prompt_confirm = State()
-    waiting_delete_game_confirm = State()
 
     waiting_new_analytics_game = State()
     waiting_new_analytics_prompt = State()
