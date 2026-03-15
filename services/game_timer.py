@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 _dispatcher: Dispatcher | None = None
 _timer_tasks: dict[int, asyncio.Task] = {}
 
+ANALYSIS_FAILED_FALLBACK_TEXT = "Не удалось выполнить анализ. Возвращаю на стартовый экран."
+
 
 def configure_game_timer_service(dispatcher: Dispatcher) -> None:
     """
@@ -166,6 +168,9 @@ async def _dialog_timeout_worker(
         )
         raise
 
+    from database.session import SessionFactory
+    from bot.handlers.start import send_start_screen_by_bot
+
     try:
         if _dispatcher is None:
             logger.error("Сервис таймеров не сконфигурирован: dispatcher отсутствует.")
@@ -200,9 +205,6 @@ async def _dialog_timeout_worker(
             write_to_db=True,
         )
 
-        from database.session import SessionFactory
-        from bot.handlers.start import send_start_screen_by_bot
-
         async with SessionFactory() as session:
             await run_dialog_analysis_and_send_results(
                 bot=bot,
@@ -236,6 +238,32 @@ async def _dialog_timeout_worker(
             },
             write_to_db=True,
         )
+
+        try:
+            await bot.send_message(chat_id=chat_id, text=ANALYSIS_FAILED_FALLBACK_TEXT)
+        except Exception as send_error:  # noqa: BLE001
+            logger.exception("Не удалось отправить пользователю сообщение об ошибке таймера: %s", send_error)
+
+        try:
+            async with SessionFactory() as session:
+                if _dispatcher is not None:
+                    state = await _dispatcher.fsm.get_context(
+                        bot=bot,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                    )
+                else:
+                    state = None
+
+                await send_start_screen_by_bot(
+                    bot=bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    session=session,
+                    state=state,
+                )
+        except Exception as fallback_error:  # noqa: BLE001
+            logger.exception("Не удалось вернуть пользователя на старт после ошибки таймера: %s", fallback_error)
 
     finally:
         current_task = asyncio.current_task()

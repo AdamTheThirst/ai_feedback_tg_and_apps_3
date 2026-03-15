@@ -59,6 +59,7 @@ router = Router(name="game-router")
 logger = logging.getLogger(__name__)
 
 DIALOG_TIMEOUT_SECONDS = 600
+ANALYSIS_FAILED_FALLBACK_TEXT = "Не удалось выполнить анализ. Возвращаю на стартовый экран."
 
 
 async def build_game_root_menu_payload(
@@ -612,13 +613,32 @@ async def finish_dialog_handler(
         write_to_db=True,
     )
 
-    await run_dialog_analysis_and_send_results(
-        bot=bot,
-        chat_id=callback.message.chat.id,
-        session=session,
-        dialog_id=dialog_id,
-        game_id=game_id,
-    )
+    try:
+        await run_dialog_analysis_and_send_results(
+            bot=bot,
+            chat_id=callback.message.chat.id,
+            session=session,
+            dialog_id=dialog_id,
+            game_id=game_id,
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.exception("Ошибка при завершении диалога пользователем: %s", error)
+
+        await AppLogger.error(
+            event="dialog.finish_by_user_error",
+            source=__name__,
+            message="Ошибка во время аналитики после нажатия кнопки завершения",
+            payload={
+                "user_id": callback.from_user.id,
+                "chat_id": callback.message.chat.id,
+                "dialog_id": dialog_id,
+                "game_id": game_id,
+                "error": str(error),
+            },
+            write_to_db=True,
+        )
+
+        await callback.message.answer(ANALYSIS_FAILED_FALLBACK_TEXT)
 
     from bot.handlers.start import send_start_screen_by_bot
 

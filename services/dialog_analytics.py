@@ -73,6 +73,8 @@ ANALYSIS_RESULT_JSON_INSTRUCTION = """
 - никаких комментариев вне JSON.
 """.strip()
 
+ANALYSIS_FAILED_FALLBACK_TEXT = "Не удалось выполнить анализ. Возвращаю на стартовый экран."
+
 
 @dataclass(slots=True)
 class DialogAnalysisResult:
@@ -223,6 +225,34 @@ def format_score(score: float) -> str:
     return f"{score:.2f}".rstrip("0").rstrip(".")
 
 
+def _get_ui_value(ui_items: dict, alias: str, fallback: str) -> str:
+    """
+    Безопасно получает текст UI по alias.
+
+    Как работает:
+    - если alias найден и запись активна, возвращает её value;
+    - иначе возвращает fallback.
+
+    Что принимает:
+    - ui_items: словарь alias -> UIText;
+    - alias: ключ текста;
+    - fallback: запасной текст.
+
+    Что возвращает:
+    - строку текста.
+    """
+
+    item = ui_items.get(alias)
+
+    if item is None:
+        return fallback
+
+    if hasattr(item, "is_active") and not item.is_active:
+        return fallback
+
+    return item.value
+
+
 def _request_dialog_analysis(prompt_text: str, dialog_text: str) -> DialogAnalysisResult:
     """
     Выполняет синхронный запрос к ИИ для одного аналитического промта.
@@ -345,10 +375,26 @@ async def run_dialog_analysis_and_send_results(
         ]
     )
 
-    in_progress_text = ui_items["analysis_in_progress_message"].value
-    no_prompts_text = ui_items["analysis_no_prompts_message"].value
-    empty_dialog_text = ui_items["analysis_empty_dialog_message"].value
-    total_score_template = ui_items["analysis_total_score_message"].value
+    in_progress_text = _get_ui_value(
+        ui_items,
+        "analysis_in_progress_message",
+        "Идёт анализ. Это может занять несколько минут, пожалуйста, подождите",
+    )
+    no_prompts_text = _get_ui_value(
+        ui_items,
+        "analysis_no_prompts_message",
+        "Для этой игры пока не настроена аналитика.",
+    )
+    empty_dialog_text = _get_ui_value(
+        ui_items,
+        "analysis_empty_dialog_message",
+        "Не удалось найти сообщения диалога для анализа.",
+    )
+    total_score_template = _get_ui_value(
+        ui_items,
+        "analysis_total_score_message",
+        "Общая сумма баллов: {score}",
+    )
 
     wait_message = await bot.send_message(
         chat_id=chat_id,
@@ -429,15 +475,33 @@ async def run_dialog_analysis_and_send_results(
 
         total_score += result.rating
 
-        await user_result_repo.create_result(
-            user_id=result_user_id,
-            dialog_id=dialog_id,
-            game_id=game_id,
-            subgame_id=result_subgame_id,
-            analitics_alias=analytics_prompt.alias,
-            analitics_score=result.rating,
-            analitics_text=result.text,
-        )
+        try:
+            await user_result_repo.create_result(
+                user_id=result_user_id,
+                dialog_id=dialog_id,
+                game_id=game_id,
+                subgame_id=result_subgame_id,
+                analitics_alias=analytics_prompt.alias,
+                analitics_score=result.rating,
+                analitics_text=result.text,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.exception("Не удалось сохранить результат аналитики пользователя: %s", error)
+
+            await AppLogger.error(
+                event="dialog.analysis_result_save_failed",
+                source=__name__,
+                message="Не удалось записать результат аналитики в user_results",
+                payload={
+                    "chat_id": chat_id,
+                    "dialog_id": dialog_id,
+                    "game_id": game_id,
+                    "subgame_id": result_subgame_id,
+                    "analytics_alias": analytics_prompt.alias,
+                    "error": str(error),
+                },
+                write_to_db=True,
+            )
 
         results_to_send.append(
             f"{format_score(result.rating)}\n\r{result.text}"
