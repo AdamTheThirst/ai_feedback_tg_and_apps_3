@@ -230,8 +230,8 @@ async def send_start_screen(
     greeting_text, keyboard = await build_start_screen_payload(session=session)
 
     # ТЕХНИЧЕСКИЙ БЛОК: этот кусок можно потом просто закомментировать целиком.
-    technical_info = build_technical_user_block(message)
-    final_text = f"{escape(greeting_text)}{technical_info}"
+    # technical_info = build_technical_user_block(message)
+    # final_text = f"{escape(greeting_text)}{technical_info}"
 
     logger.info(
         "Показан стартовый экран. user_id=%s chat_id=%s",
